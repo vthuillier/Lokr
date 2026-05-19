@@ -22,7 +22,8 @@ import {
     Globe,
     FileText,
     Pencil,
-    X
+    X,
+    AlertCircle
 } from "lucide-react";
 
 type DecryptedItem = {
@@ -82,11 +83,79 @@ export default function VaultPage() {
     const [notes, setNotes] = useState("");
     const [showFormPassword, setShowFormPassword] = useState(false);
 
+    // Security / MFA state
+    const [showSecurityModal, setShowSecurityModal] = useState(false);
+    const [mfaEnabled, setMfaEnabled] = useState(false);
+    const [totpSetupData, setTotpSetupData] = useState<{ secret: string; otpauthUri: string } | null>(null);
+    const [verifyCode, setVerifyCode] = useState("");
+    const [securityError, setSecurityError] = useState("");
+    const [securitySuccess, setSecuritySuccess] = useState("");
+    const [securityLoading, setSecurityLoading] = useState(false);
+
     useEffect(() => {
         if (derivedKey) {
             loadItems();
+            checkMfaStatus();
         }
     }, [derivedKey]);
+
+    async function checkMfaStatus() {
+        try {
+            const response = await api.get("/me");
+            setMfaEnabled(response.data.totpEnabled);
+        } catch (err) {
+            console.error("Failed to fetch MFA status:", err);
+        }
+    }
+
+    async function handleSetupTotp() {
+        try {
+            setSecurityLoading(true);
+            setSecurityError("");
+            setSecuritySuccess("");
+            const response = await api.post("/user/totp/setup");
+            setTotpSetupData(response.data);
+        } catch (err: any) {
+            setSecurityError(err.response?.data?.message || "Erreur lors de la configuration du TOTP.");
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
+
+    async function handleEnableTotp(e: FormEvent) {
+        e.preventDefault();
+        try {
+            setSecurityLoading(true);
+            setSecurityError("");
+            setSecuritySuccess("");
+            await api.post("/user/totp/enable", { code: verifyCode });
+            setSecuritySuccess("Double authentification activée avec succès !");
+            setMfaEnabled(true);
+            setTotpSetupData(null);
+            setVerifyCode("");
+        } catch (err: any) {
+            setSecurityError(err.response?.data?.message || "Code de validation incorrect.");
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
+
+    async function handleDisableTotp(e: FormEvent) {
+        e.preventDefault();
+        try {
+            setSecurityLoading(true);
+            setSecurityError("");
+            setSecuritySuccess("");
+            await api.post("/user/totp/disable", { code: verifyCode });
+            setSecuritySuccess("Double authentification désactivée.");
+            setMfaEnabled(false);
+            setVerifyCode("");
+        } catch (err: any) {
+            setSecurityError(err.response?.data?.message || "Code de validation incorrect.");
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
 
     async function loadItems() {
         if (!derivedKey) return;
@@ -226,8 +295,15 @@ export default function VaultPage() {
 
                     <div className="flex items-center gap-4">
                         <button
+                            onClick={() => setShowSecurityModal(true)}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-indigo-600 hover:bg-indigo-50/50 rounded-xl transition-all cursor-pointer"
+                        >
+                            <Shield className="w-4 h-4" />
+                            Double Auth (MFA)
+                        </button>
+                        <button
                             onClick={logout}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
                         >
                             <LogOut className="w-4 h-4" />
                             Déconnexion
@@ -521,6 +597,199 @@ export default function VaultPage() {
                     </div>
                 </div>
             </main>
+
+            {/* Security Modal */}
+            <AnimatePresence>
+                {showSecurityModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        {/* Backdrop */}
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => {
+                                setShowSecurityModal(false);
+                                setTotpSetupData(null);
+                                setVerifyCode("");
+                                setSecurityError("");
+                                setSecuritySuccess("");
+                            }}
+                            className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+                        />
+
+                        {/* Modal container */}
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                            className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden z-10 p-8 space-y-6"
+                        >
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Shield className="w-6 h-6 text-indigo-600" />
+                                    <h3 className="text-xl font-bold text-slate-800">
+                                        Double Authentification (MFA)
+                                    </h3>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        setShowSecurityModal(false);
+                                        setTotpSetupData(null);
+                                        setVerifyCode("");
+                                        setSecurityError("");
+                                        setSecuritySuccess("");
+                                    }}
+                                    className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-all cursor-pointer"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            {securitySuccess && (
+                                <div className="bg-green-50 border border-green-100 text-green-700 p-4 rounded-2xl flex items-center gap-3 animate-in">
+                                    <Check className="w-5 h-5 text-green-600 shrink-0" />
+                                    <p className="text-sm font-semibold">{securitySuccess}</p>
+                                </div>
+                            )}
+
+                            {securityError && (
+                                <div className="bg-red-50 border border-red-100 text-red-700 p-4 rounded-2xl flex items-center gap-3 animate-in">
+                                    <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+                                    <p className="text-sm font-semibold">{securityError}</p>
+                                </div>
+                            )}
+
+                            {mfaEnabled ? (
+                                <div className="space-y-6">
+                                    <div className="bg-indigo-50 border border-indigo-100/50 p-6 rounded-2xl text-center space-y-2">
+                                        <div className="mx-auto w-12 h-12 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-indigo-100">
+                                            <Shield className="w-6 h-6" />
+                                        </div>
+                                        <h4 className="font-bold text-indigo-900">La double authentification est activée</h4>
+                                        <p className="text-sm text-indigo-700">
+                                            Votre compte est protégé par une validation supplémentaire à chaque connexion.
+                                        </p>
+                                    </div>
+
+                                    <form onSubmit={handleDisableTotp} className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <label className="text-sm font-semibold text-slate-600 ml-1">
+                                                Désactiver la double authentification
+                                            </label>
+                                            <p className="text-xs text-slate-500 mb-2">
+                                                Saisissez un code à 6 chiffres pour confirmer la désactivation.
+                                            </p>
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    required
+                                                    pattern="[0-9]{6}"
+                                                    maxLength={6}
+                                                    className="input-field text-center tracking-[0.5em] font-bold"
+                                                    placeholder="000000"
+                                                    value={verifyCode}
+                                                    onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ""))}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            type="submit"
+                                            disabled={securityLoading || verifyCode.length !== 6}
+                                            className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3.5 rounded-2xl transition-all shadow-lg shadow-red-100 flex items-center justify-center gap-2 cursor-pointer"
+                                        >
+                                            {securityLoading ? (
+                                                <RefreshCw className="w-5 h-5 animate-spin" />
+                                            ) : (
+                                                "Désactiver MFA"
+                                            )}
+                                        </button>
+                                    </form>
+                                </div>
+                            ) : (
+                                <div className="space-y-6">
+                                    {!totpSetupData ? (
+                                        <div className="space-y-6">
+                                            <p className="text-slate-500 text-sm leading-relaxed">
+                                                Renforcez la sécurité de votre coffre en ajoutant un deuxième facteur d'authentification. Vous devrez saisir un code à usage unique généré par votre smartphone pour vous connecter.
+                                            </p>
+                                            <button
+                                                onClick={handleSetupTotp}
+                                                disabled={securityLoading}
+                                                className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 cursor-pointer"
+                                            >
+                                                {securityLoading ? (
+                                                    <RefreshCw className="w-5 h-5 animate-spin" />
+                                                ) : (
+                                                    "Configurer le TOTP"
+                                                )}
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-6">
+                                            <div className="space-y-4">
+                                                <p className="text-sm font-semibold text-slate-700">
+                                                    1. Scannez ce QR Code avec votre application d'authentification (Google Authenticator, Microsoft Authenticator, Bitwarden, Authy, etc.) :
+                                                </p>
+                                                
+                                                <div className="flex justify-center py-2">
+                                                    <img 
+                                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(totpSetupData.otpauthUri)}`} 
+                                                        alt="QR Code MFA" 
+                                                        className="border-4 border-slate-50 p-2 bg-white rounded-2xl shadow-md"
+                                                    />
+                                                </div>
+
+                                                <p className="text-xs font-semibold text-slate-500 text-center">
+                                                    Ou saisissez manuellement cette clé : 
+                                                    <code className="block bg-slate-50 text-indigo-600 font-mono text-sm py-1.5 px-3 rounded-lg border border-slate-100 select-all font-bold mt-1 text-center">
+                                                        {totpSetupData.secret}
+                                                    </code>
+                                                </p>
+                                            </div>
+
+                                            <div className="w-full h-px bg-slate-100" />
+
+                                            <form onSubmit={handleEnableTotp} className="space-y-4">
+                                                <div className="space-y-1.5">
+                                                    <label className="text-sm font-semibold text-slate-700">
+                                                        2. Confirmez l'activation :
+                                                    </label>
+                                                    <p className="text-xs text-slate-500 mb-2">
+                                                        Saisissez le code à 6 chiffres généré par votre application d'authentification.
+                                                    </p>
+                                                    <input
+                                                        type="text"
+                                                        required
+                                                        pattern="[0-9]{6}"
+                                                        maxLength={6}
+                                                        className="input-field text-center tracking-[0.5em] font-bold"
+                                                        placeholder="000000"
+                                                        value={verifyCode}
+                                                        onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ""))}
+                                                    />
+                                                </div>
+
+                                                <button
+                                                    type="submit"
+                                                    disabled={securityLoading || verifyCode.length !== 6}
+                                                    className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 cursor-pointer"
+                                                >
+                                                    {securityLoading ? (
+                                                        <RefreshCw className="w-5 h-5 animate-spin" />
+                                                    ) : (
+                                                        "Activer MFA"
+                                                    )}
+                                                </button>
+                                            </form>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

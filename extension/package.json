@@ -14,5 +14,8 @@
     "typescript": "~6.0.2",
     "vite": "^8.0.12",
     "vite-plugin-static-copy": "^4.1.0"
+  },
+  "dependencies": {
+    "otpauth": "^9.5.1"
   }
 }

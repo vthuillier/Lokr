@@ -18,6 +18,7 @@ public class AuthService {
         private final UserRepository userRepository;
         private final PasswordEncoder passwordEncoder;
         private final JwtService jwtService;
+        private final TotpService totpService;
 
         public AuthResponse register(RegisterRequest registerRequest) {
 
@@ -53,8 +54,8 @@ public class AuthService {
 
                 User user = userRepository.findByEmail(loginRequest.email())
                                 .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
-                                                org.springframework.http.HttpStatus.UNAUTHORIZED,
-                                                "Invalid credentials"));
+                                                 org.springframework.http.HttpStatus.UNAUTHORIZED,
+                                                 "Invalid credentials"));
 
                 boolean matches = passwordEncoder.matches(
                                 loginRequest.password(),
@@ -65,6 +66,24 @@ public class AuthService {
                                         org.springframework.http.HttpStatus.UNAUTHORIZED, "Invalid credentials");
                 }
 
+                if (user.isTotpEnabled()) {
+                        if (loginRequest.code() == null || loginRequest.code().trim().isEmpty()) {
+                                return new AuthResponse(
+                                                null,
+                                                null,
+                                                null,
+                                                null,
+                                                true,
+                                                null);
+                        }
+
+                        boolean isValid = totpService.verifyCode(user.getTotpSecret(), loginRequest.code());
+                        if (!isValid) {
+                                throw new org.springframework.web.server.ResponseStatusException(
+                                                org.springframework.http.HttpStatus.UNAUTHORIZED, "Code MFA invalide");
+                        }
+                }
+
                 String token = jwtService.generateToken(user.getId());
 
                 return new AuthResponse(
@@ -73,8 +92,9 @@ public class AuthService {
                                 user.getEncryptedVerification(),
                                 user.getVerificationNonce(),
                                 user.isTotpEnabled(),
-                                user.getTotpSecret());
+                                null);
 
         }
 
 }
+

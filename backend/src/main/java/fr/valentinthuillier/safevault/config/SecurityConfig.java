@@ -47,6 +47,7 @@ public class SecurityConfig {
                                 "/error"
                         ).permitAll()
                         .requestMatchers("/api/me").authenticated()
+                        .requestMatchers("/api/user/**").authenticated()
                         .requestMatchers("/api/vault/**").authenticated()
                         .anyRequest().denyAll()
                 )
