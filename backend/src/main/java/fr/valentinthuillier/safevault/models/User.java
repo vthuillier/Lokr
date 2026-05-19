@@ -39,6 +39,12 @@ public class User {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    @Column(name = "totp_secret", nullable = true, columnDefinition = "TEXT")
+    private String totpSecret;
+
+    @Column(name = "totp_enabled", nullable = false, columnDefinition = "BOOLEAN")
+    private boolean totpEnabled;
+
     @PrePersist
     public void prePersist() {
         if (id == null) {

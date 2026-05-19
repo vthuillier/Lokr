@@ -13,8 +13,8 @@ public class UserController {
     public MeResponse me(@AuthenticationPrincipal User user) {
         return new MeResponse(
                 user.getId(),
-                user.getEmail()
-        );
+                user.getEmail(),
+                user.isTotpEnabled());
     }
 
 }
