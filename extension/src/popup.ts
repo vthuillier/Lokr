@@ -1,5 +1,6 @@
 import "./style.css";
 import { decryptText, deriveKey, base64ToUint8Array } from "./crypto";
+import { checkPasswordPwned } from "./hibp";
 
 type VaultItem = {
   id: string;
@@ -230,11 +231,53 @@ async function updateItemsList(query: string) {
   } else {
     others.forEach(item => listDiv.appendChild(createItemCard(item)));
   }
+
+  // Trigger background HIBP checking for all rendered items
+  decryptedItems.forEach(checkItemPassword);
+}
+
+const pwnedCache: Record<string, number> = {};
+
+async function checkItemPassword(item: DecryptedItem) {
+  if (!item.password) return;
+  
+  if (pwnedCache[item.password] !== undefined) {
+    if (pwnedCache[item.password] > 0) {
+      showPwnedWarningOnCard(item.id, pwnedCache[item.password]);
+    }
+    return;
+  }
+
+  try {
+    const count = await checkPasswordPwned(item.password);
+    pwnedCache[item.password] = count;
+    if (count > 0) {
+      showPwnedWarningOnCard(item.id, count);
+    }
+  } catch (err) {
+    console.error("Erreur check HIBP:", err);
+  }
+}
+
+function showPwnedWarningOnCard(itemId: string, count: number) {
+  const card = document.querySelector(`.item-card[data-id="${itemId}"]`);
+  if (!card) return;
+  
+  if (card.querySelector(".pwned-badge")) return;
+  
+  const infoDiv = card.querySelector(".item-info");
+  if (!infoDiv) return;
+  
+  const badge = document.createElement("div");
+  badge.className = "pwned-badge animate-in";
+  badge.innerHTML = `⚠️ Compromis (${count.toLocaleString()} fuites)`;
+  infoDiv.appendChild(badge);
 }
 
 function createItemCard(item: DecryptedItem) {
   const itemEl = document.createElement("div");
   itemEl.className = "item-card";
+  itemEl.setAttribute("data-id", item.id);
   
   let favicon = null;
   try {
