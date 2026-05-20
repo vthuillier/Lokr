@@ -23,8 +23,10 @@ import {
     FileText,
     Pencil,
     X,
-    AlertCircle
+    AlertCircle,
+    CheckCircle2
 } from "lucide-react";
+import { checkPasswordPwned } from "../service/hibpService";
 
 type DecryptedItem = {
     id: string;
@@ -82,6 +84,9 @@ export default function VaultPage() {
     const [url, setUrl] = useState("");
     const [notes, setNotes] = useState("");
     const [showFormPassword, setShowFormPassword] = useState(false);
+    const [formPwnedCount, setFormPwnedCount] = useState<number | null>(null);
+    const [checkingFormPwned, setCheckingFormPwned] = useState(false);
+    const [pwnedCounts, setPwnedCounts] = useState<Record<string, number>>({});
 
     // Security / MFA state
     const [showSecurityModal, setShowSecurityModal] = useState(false);
@@ -98,6 +103,37 @@ export default function VaultPage() {
             checkMfaStatus();
         }
     }, [derivedKey]);
+
+    // Real-time HIBP check for form password input
+    useEffect(() => {
+        if (!password) {
+            setFormPwnedCount(null);
+            setCheckingFormPwned(false);
+            return;
+        }
+
+        setCheckingFormPwned(true);
+        const timer = setTimeout(async () => {
+            const count = await checkPasswordPwned(password);
+            setFormPwnedCount(count);
+            setCheckingFormPwned(false);
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [password]);
+
+    // Check pwned status for all items in the vault asynchronously
+    useEffect(() => {
+        if (items.length === 0) return;
+
+        const uniquePasswords = Array.from(new Set(items.map(item => item.password).filter(Boolean)));
+        
+        uniquePasswords.forEach(async (pwd) => {
+            if (pwnedCounts[pwd] !== undefined) return;
+            const count = await checkPasswordPwned(pwd);
+            setPwnedCounts(prev => ({ ...prev, [pwd]: count }));
+        });
+    }, [items]);
 
     async function checkMfaStatus() {
         try {
@@ -247,6 +283,8 @@ export default function VaultPage() {
         setUrl("");
         setNotes("");
         setShowFormPassword(false);
+        setFormPwnedCount(null);
+        setCheckingFormPwned(false);
     }
 
     async function handleDelete(id: string) {
@@ -396,6 +434,35 @@ export default function VaultPage() {
                                             </button>
                                         </div>
                                     </div>
+                                    {checkingFormPwned && (
+                                        <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 animate-pulse">
+                                            <RefreshCw className="w-3 h-3 animate-spin" />
+                                            Vérification HIBP...
+                                        </p>
+                                    )}
+                                    {!checkingFormPwned && formPwnedCount !== null && (
+                                        formPwnedCount > 0 ? (
+                                            <motion.div
+                                                initial={{ opacity: 0, y: -5 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                className="text-xs text-rose-600 bg-rose-50 border border-rose-100 p-2 rounded-xl flex items-start gap-1.5 mt-1"
+                                            >
+                                                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                                                <span>
+                                                    <strong>Compromis !</strong> Ce mot de passe est apparu {formPwnedCount.toLocaleString()} fois.
+                                                </span>
+                                            </motion.div>
+                                        ) : (
+                                            <motion.div
+                                                initial={{ opacity: 0, y: -5 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-100 p-2 rounded-xl flex items-start gap-1.5 mt-1"
+                                            >
+                                                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                                                <span>Mot de passe sûr (non compromis).</span>
+                                            </motion.div>
+                                        )
+                                    )}
                                 </div>
 
                                 <div className="space-y-1.5">
@@ -578,6 +645,16 @@ export default function VaultPage() {
                                                                 {copiedId === item.id && <span className="text-xs font-bold pr-1">Copié</span>}
                                                             </button>
                                                         </div>
+                                                        {pwnedCounts[item.password] !== undefined && pwnedCounts[item.password] > 0 && (
+                                                            <motion.span 
+                                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                                animate={{ opacity: 1, scale: 1 }}
+                                                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-2xl text-[11px] font-bold bg-rose-50 text-rose-600 border border-rose-100 shrink-0"
+                                                            >
+                                                                <AlertCircle className="w-3.5 h-3.5" />
+                                                                Compromis ({pwnedCounts[item.password].toLocaleString()} fuites)
+                                                            </motion.span>
+                                                        )}
                                                     </div>
 
                                                     {item.notes && (

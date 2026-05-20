@@ -1,9 +1,10 @@
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { generateSalt, uint8ArrayToBase64, deriveKey, encryptText } from "../crypto/crypto";
+import { checkPasswordPwned } from "../service/hibpService";
 import { motion } from "framer-motion";
 import { Shield, Mail, Lock, UserPlus, ArrowRight, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
 
@@ -16,6 +17,31 @@ export default function RegisterPage() {
     const [remember, setRemember] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [pwnedCount, setPwnedCount] = useState<number | null>(null);
+    const [checkingPwned, setCheckingPwned] = useState(false);
+
+    useEffect(() => {
+        if (!password) {
+            setPwnedCount(null);
+            setCheckingPwned(false);
+            return;
+        }
+
+        if (password.length < 8) {
+            setPwnedCount(null);
+            setCheckingPwned(false);
+            return;
+        }
+
+        setCheckingPwned(true);
+        const timer = setTimeout(async () => {
+            const count = await checkPasswordPwned(password);
+            setPwnedCount(count);
+            setCheckingPwned(false);
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [password]);
 
     async function handleRegister(e: FormEvent) {
         e.preventDefault();
@@ -100,6 +126,37 @@ export default function RegisterPage() {
                                         onChange={(e) => setPassword(e.target.value)}
                                     />
                                 </div>
+                                {checkingPwned && (
+                                    <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 animate-pulse">
+                                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                        Vérification de la sécurité du mot de passe...
+                                    </p>
+                                )}
+                                {!checkingPwned && pwnedCount !== null && (
+                                    pwnedCount > 0 ? (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: -5 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            className="text-xs text-rose-600 bg-rose-50 border border-rose-100 p-2.5 rounded-xl flex items-start gap-1.5 mt-1.5"
+                                        >
+                                            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                                            <span>
+                                                <strong>Attention !</strong> Ce mot de passe est compromis et est apparu dans <strong>{pwnedCount.toLocaleString()}</strong> fuites de données. Nous vous recommandons fortement d'en choisir un autre.
+                                            </span>
+                                        </motion.div>
+                                    ) : (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: -5 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-100 p-2.5 rounded-xl flex items-start gap-1.5 mt-1.5"
+                                        >
+                                            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                                            <span>
+                                                Ce mot de passe n'a pas été trouvé dans les fuites de données connues (sûr).
+                                            </span>
+                                        </motion.div>
+                                    )
+                                )}
                             </div>
 
                             <label className="flex items-start gap-3 cursor-pointer group py-2">
