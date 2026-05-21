@@ -13,9 +13,11 @@
 - **Architecture Zero-Knowledge** : Vos mots de passe sont chiffrés et déchiffrés localement dans votre navigateur. Le serveur ne voit jamais vos données en clair.
 - **WebCrypto API** : Utilisation des standards industriels **AES-GCM (256-bit)** pour le chiffrement et **PBKDF2** pour la dérivation de clé à partir du mot de passe maître.
 - **Vérification Mathématique** : Système de validation du mot de passe maître sans stockage de celui-ci.
+- **Double Authentification (2FA / TOTP)** : Sécurisation accrue de votre compte grâce à la validation par code à usage unique (compatible Google Authenticator, Authy, etc.) avec génération de QR code.
 
 ### 🌐 Application Web (Vault)
 - **Interface Premium** : Design moderne avec **Glassmorphism**, animations fluides via Framer Motion.
+- **Organisation par Dossiers** : Classement et catégorisation de vos identifiants dans des dossiers, avec possibilité de déplacer facilement une entrée d'un dossier à un autre.
 - **Logos Dynamiques** : Récupération automatique des favicons des sites web pour une reconnaissance visuelle instantanée.
 - **Gestion Complète** : Ajout, modification, suppression (avec confirmation inline) et recherche d'identifiants.
 - **Persistance Intelligente** : Option "Se souvenir de moi" pour garder le coffre déverrouillé de manière sécurisée.
