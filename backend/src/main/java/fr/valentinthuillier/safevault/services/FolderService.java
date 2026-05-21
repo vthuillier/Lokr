@@ -39,7 +39,7 @@ public class FolderService {
 
     public FolderResponse update(User user, UUID id, FolderRequest request) {
         Folder folder = folderRepository.findById(id)
-                .filter(f -> f.getUser().equals(user))
+                .filter(f -> f.getUser().getId().equals(user.getId()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         folder.setEncryptedName(request.encryptedName());
         folder.setNonce(request.nonce());
@@ -48,19 +48,19 @@ public class FolderService {
 
     public void delete(User user, UUID id) {
         Folder folder = folderRepository.findById(id)
-                .filter(f -> f.getUser().equals(user))
+                .filter(f -> f.getUser().getId().equals(user.getId()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         folderRepository.delete(folder);
     }
 
     public void moveItem(User user, UUID itemId, UUID folderId) {
         VaultItem item = vaultItemRepository.findById(itemId)
-                .filter(i -> i.getUser().equals(user))
+                .filter(i -> i.getUser().getId().equals(user.getId()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
 
         Folder folder = folderId != null
                 ? folderRepository.findById(folderId)
-                        .filter(f -> f.getUser().equals(user))
+                        .filter(f -> f.getUser().getId().equals(user.getId()))
                         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND))
                 : null;
 
