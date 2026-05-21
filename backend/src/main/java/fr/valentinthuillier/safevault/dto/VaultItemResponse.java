@@ -5,23 +5,25 @@ import java.util.UUID;
 
 public record VaultItemResponse(
 
-        UUID id,
+                UUID id,
 
-        String encryptedName,
+                UUID folderId,
 
-        String encryptedUsername,
+                String encryptedName,
 
-        String encryptedPassword,
+                String encryptedUsername,
 
-        String encryptedUrl,
+                String encryptedPassword,
 
-        String encryptedNotes,
+                String encryptedUrl,
 
-        String nonce,
+                String encryptedNotes,
 
-        Instant createdAt,
+                String nonce,
 
-        Instant updatedAt
+                Instant createdAt,
+
+                Instant updatedAt
 
 ) {
 }

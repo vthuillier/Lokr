@@ -6,8 +6,11 @@ import fr.valentinthuillier.safevault.dto.RegisterRequest;
 import fr.valentinthuillier.safevault.models.User;
 import fr.valentinthuillier.safevault.repositories.UserRepository;
 import lombok.RequiredArgsConstructor;
+
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
 
@@ -15,64 +18,86 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtService jwtService;
+        private final UserRepository userRepository;
+        private final PasswordEncoder passwordEncoder;
+        private final JwtService jwtService;
+        private final TotpService totpService;
 
-    public AuthResponse register(RegisterRequest registerRequest) {
+        public AuthResponse register(RegisterRequest registerRequest) {
 
-        if (userRepository.existsByEmail(registerRequest.email())) {
-            throw new RuntimeException("Email already exists");
+                if (userRepository.existsByEmail(registerRequest.email())) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
+                }
+
+                User user = User.builder()
+                                .id(UUID.randomUUID())
+                                .email(registerRequest.email())
+                                .passwordHash(passwordEncoder.encode(registerRequest.password()))
+                                .kdfSalt(registerRequest.kdfSalt())
+                                .kdfAlgorithm("Argon2id")
+                                .encryptedVerification(registerRequest.encryptedVerification())
+                                .verificationNonce(registerRequest.verificationNonce())
+                                .build();
+
+                userRepository.save(user);
+
+                String token = jwtService.generateToken(user.getId());
+
+                return new AuthResponse(
+                                token,
+                                user.getKdfSalt(),
+                                user.getEncryptedVerification(),
+                                user.getVerificationNonce(),
+                                user.isTotpEnabled(),
+                                user.getTotpSecret());
+
         }
 
-        User user = User.builder()
-                .id(UUID.randomUUID())
-                .email(registerRequest.email())
-                .passwordHash(passwordEncoder.encode(registerRequest.password()))
-                .kdfSalt(registerRequest.kdfSalt())
-                .kdfAlgorithm("Argon2id")
-                .encryptedVerification(registerRequest.encryptedVerification())
-                .verificationNonce(registerRequest.verificationNonce())
-                .build();
+        public AuthResponse login(LoginRequest loginRequest) {
 
-        userRepository.save(user);
+                User user = userRepository.findByEmail(loginRequest.email())
+                                .orElseThrow(() -> new ResponseStatusException(
+                                                HttpStatus.UNAUTHORIZED,
+                                                "Invalid credentials"));
 
-        String token = jwtService.generateToken(user.getId());
+                boolean matches = passwordEncoder.matches(
+                                loginRequest.password(),
+                                user.getPasswordHash());
 
-        return new AuthResponse(
-                token, 
-                user.getKdfSalt(),
-                user.getEncryptedVerification(),
-                user.getVerificationNonce()
-        );
+                if (!matches) {
+                        throw new ResponseStatusException(
+                                        HttpStatus.UNAUTHORIZED, "Invalid credentials");
+                }
 
-    }
+                if (user.isTotpEnabled()) {
+                        if (loginRequest.code() == null || loginRequest.code().trim().isEmpty()) {
+                                return new AuthResponse(
+                                                null,
+                                                null,
+                                                null,
+                                                null,
+                                                true,
+                                                null);
+                        }
 
-    public AuthResponse login(LoginRequest loginRequest) {
+                        boolean isValid = totpService.verifyCode(user.getTotpSecret(), loginRequest.code());
+                        if (!isValid) {
+                                throw new ResponseStatusException(
+                                                HttpStatus.UNAUTHORIZED, "Code MFA invalide");
+                        }
+                }
 
-        User user = userRepository.findByEmail(loginRequest.email())
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
-                        org.springframework.http.HttpStatus.UNAUTHORIZED, "Invalid credentials"));
+                String token = jwtService.generateToken(user.getId());
 
-        boolean matches = passwordEncoder.matches(
-                loginRequest.password(),
-                user.getPasswordHash()
-        );
+                return new AuthResponse(
+                                token,
+                                user.getKdfSalt(),
+                                user.getEncryptedVerification(),
+                                user.getVerificationNonce(),
+                                user.isTotpEnabled(),
+                                null);
 
-        if (!matches) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
-
-        String token = jwtService.generateToken(user.getId());
-
-        return new AuthResponse(
-                token, 
-                user.getKdfSalt(),
-                user.getEncryptedVerification(),
-                user.getVerificationNonce()
-        );
-
-    }
 
 }
+

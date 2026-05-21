@@ -47,7 +47,9 @@ public class SecurityConfig {
                                 "/error"
                         ).permitAll()
                         .requestMatchers("/api/me").authenticated()
+                        .requestMatchers("/api/user/**").authenticated()
                         .requestMatchers("/api/vault/**").authenticated()
+                        .requestMatchers("/api/folders/**").authenticated()
                         .anyRequest().denyAll()
                 )
                 .addFilterBefore(
@@ -62,7 +64,7 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
 
         configuration.setAllowedOriginPatterns(List.of("*"));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
 

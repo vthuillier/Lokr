@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import { encryptText, decryptText, generatePassword } from "../crypto/crypto";
-import type { VaultItem } from "../types/vault";
+import type { VaultItem, Folder, DecryptedFolder } from "../types/vault";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
     Plus, 
@@ -22,8 +22,13 @@ import {
     Globe,
     FileText,
     Pencil,
-    X
+    X,
+    AlertCircle,
+    CheckCircle2,
+    Folder as FolderIcon,
+    FolderOpen
 } from "lucide-react";
+import { checkPasswordPwned } from "../service/hibpService";
 
 type DecryptedItem = {
     id: string;
@@ -32,6 +37,7 @@ type DecryptedItem = {
     password: string;
     url: string;
     notes: string;
+    folderId?: string | null;
 };
 
 const Favicon = ({ url }: { url: string }) => {
@@ -81,12 +87,124 @@ export default function VaultPage() {
     const [url, setUrl] = useState("");
     const [notes, setNotes] = useState("");
     const [showFormPassword, setShowFormPassword] = useState(false);
+    const [formPwnedCount, setFormPwnedCount] = useState<number | null>(null);
+    const [checkingFormPwned, setCheckingFormPwned] = useState(false);
+    const [pwnedCounts, setPwnedCounts] = useState<Record<string, number>>({});
+
+    // Folder State
+    const [folders, setFolders] = useState<DecryptedFolder[]>([]);
+    const [selectedFolderId, setSelectedFolderId] = useState<string>("all");
+    const [itemFolderId, setItemFolderId] = useState<string>("none");
+    const [newFolderName, setNewFolderName] = useState("");
+    const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+    const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+    const [editingFolderName, setEditingFolderName] = useState("");
+
+    // Security / MFA state
+    const [showSecurityModal, setShowSecurityModal] = useState(false);
+    const [mfaEnabled, setMfaEnabled] = useState(false);
+    const [totpSetupData, setTotpSetupData] = useState<{ secret: string; otpauthUri: string } | null>(null);
+    const [verifyCode, setVerifyCode] = useState("");
+    const [securityError, setSecurityError] = useState("");
+    const [securitySuccess, setSecuritySuccess] = useState("");
+    const [securityLoading, setSecurityLoading] = useState(false);
 
     useEffect(() => {
         if (derivedKey) {
             loadItems();
+            loadFolders();
+            checkMfaStatus();
         }
     }, [derivedKey]);
+
+    // Real-time HIBP check for form password input
+    useEffect(() => {
+        if (!password) {
+            setFormPwnedCount(null);
+            setCheckingFormPwned(false);
+            return;
+        }
+
+        setCheckingFormPwned(true);
+        const timer = setTimeout(async () => {
+            const count = await checkPasswordPwned(password);
+            setFormPwnedCount(count);
+            setCheckingFormPwned(false);
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [password]);
+
+    // Check pwned status for all items in the vault asynchronously
+    useEffect(() => {
+        if (items.length === 0) return;
+
+        const uniquePasswords = Array.from(new Set(items.map(item => item.password).filter(Boolean)));
+        
+        uniquePasswords.forEach(async (pwd) => {
+            if (pwnedCounts[pwd] !== undefined) return;
+            const count = await checkPasswordPwned(pwd);
+            setPwnedCounts(prev => ({ ...prev, [pwd]: count }));
+        });
+    }, [items]);
+
+    async function checkMfaStatus() {
+        try {
+            const response = await api.get("/me");
+            setMfaEnabled(response.data.totpEnabled);
+        } catch (err) {
+            console.error("Failed to fetch MFA status:", err);
+        }
+    }
+
+    async function handleSetupTotp() {
+        try {
+            setSecurityLoading(true);
+            setSecurityError("");
+            setSecuritySuccess("");
+            const response = await api.post("/user/totp/setup");
+            setTotpSetupData(response.data);
+        } catch (err: any) {
+            setSecurityError(err.response?.data?.message || "Erreur lors de la configuration du TOTP.");
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
+
+    async function handleEnableTotp(e: FormEvent) {
+        e.preventDefault();
+        try {
+            setSecurityLoading(true);
+            setSecurityError("");
+            setSecuritySuccess("");
+            await api.post("/user/totp/enable", { code: verifyCode });
+            setSecuritySuccess("Double authentification activée avec succès !");
+            setMfaEnabled(true);
+            setTotpSetupData(null);
+            setVerifyCode("");
+        } catch (err: any) {
+            setSecurityError(err.response?.data?.message || "Code de validation incorrect.");
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
+
+    async function handleDisableTotp(e: FormEvent) {
+        e.preventDefault();
+        try {
+            setSecurityLoading(true);
+            setSecurityError("");
+            setSecuritySuccess("");
+            await api.post("/user/totp/disable", { code: verifyCode });
+            setSecuritySuccess("Double authentification désactivée.");
+            setMfaEnabled(false);
+            setVerifyCode("");
+        } catch (err: any) {
+            setSecurityError(err.response?.data?.message || "Code de validation incorrect.");
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
 
     async function loadItems() {
         if (!derivedKey) return;
@@ -97,6 +215,7 @@ export default function VaultPage() {
             const decrypted = await Promise.all(
                 response.data.map(async (item) => ({
                     id: item.id,
+                    folderId: item.folderId,
                     name: await decryptText(item.encryptedName, item.nonce, derivedKey),
                     username: item.encryptedUsername
                         ? await decryptText(item.encryptedUsername, item.nonce, derivedKey)
@@ -117,6 +236,71 @@ export default function VaultPage() {
             console.error("Failed to load items:", err);
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function loadFolders() {
+        if (!derivedKey) return;
+        try {
+            const response = await api.get<Folder[]>("/folders");
+            const decrypted = await Promise.all(
+                response.data.map(async (f) => ({
+                    id: f.id,
+                    name: await decryptText(f.encryptedName, f.nonce, derivedKey),
+                }))
+            );
+            setFolders(decrypted);
+        } catch (err) {
+            console.error("Failed to load folders:", err);
+        }
+    }
+
+    async function handleCreateFolder(e: React.FormEvent) {
+        e.preventDefault();
+        if (!newFolderName.trim() || !derivedKey) return;
+        try {
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const encrypted = await encryptText(newFolderName.trim(), derivedKey, iv);
+            await api.post("/folders", {
+                encryptedName: encrypted.ciphertext,
+                nonce: encrypted.iv
+            });
+            setNewFolderName("");
+            setIsCreatingFolder(false);
+            await loadFolders();
+        } catch (err) {
+            console.error("Failed to create folder:", err);
+        }
+    }
+
+    async function handleRenameFolder(folderId: string) {
+        if (!editingFolderName.trim() || !derivedKey) return;
+        try {
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const encrypted = await encryptText(editingFolderName.trim(), derivedKey, iv);
+            await api.put(`/folders/${folderId}`, {
+                encryptedName: encrypted.ciphertext,
+                nonce: encrypted.iv
+            });
+            setEditingFolderId(null);
+            setEditingFolderName("");
+            await loadFolders();
+        } catch (err) {
+            console.error("Failed to rename folder:", err);
+        }
+    }
+
+    async function handleDeleteFolder(folderId: string) {
+        if (!confirm("Voulez-vous vraiment supprimer ce dossier ? Les identifiants à l'intérieur ne seront pas supprimés.")) return;
+        try {
+            await api.delete(`/folders/${folderId}`);
+            if (selectedFolderId === folderId) {
+                setSelectedFolderId("all");
+            }
+            await loadFolders();
+            await loadItems();
+        } catch (err) {
+            console.error("Failed to delete folder:", err);
         }
     }
 
@@ -145,8 +329,21 @@ export default function VaultPage() {
 
             if (editingId) {
                 await api.put(`/vault/items/${editingId}`, payload);
+                const originalItem = items.find(i => i.id === editingId);
+                const oldFolderId = originalItem?.folderId || "none";
+                if (itemFolderId !== oldFolderId) {
+                    await api.patch(`/folders/items/${editingId}/move`, {
+                        folderId: itemFolderId === "none" ? null : itemFolderId
+                    });
+                }
             } else {
-                await api.post("/vault/items", payload);
+                const response = await api.post("/vault/items", payload);
+                const createdItem = response.data;
+                if (itemFolderId && itemFolderId !== "none") {
+                    await api.patch(`/folders/items/${createdItem.id}/move`, {
+                        folderId: itemFolderId
+                    });
+                }
             }
 
             cancelEdit();
@@ -166,6 +363,7 @@ export default function VaultPage() {
         setPassword(item.password);
         setUrl(item.url);
         setNotes(item.notes);
+        setItemFolderId(item.folderId || "none");
         setShowFormPassword(false);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -177,7 +375,10 @@ export default function VaultPage() {
         setPassword("");
         setUrl("");
         setNotes("");
+        setItemFolderId("none");
         setShowFormPassword(false);
+        setFormPwnedCount(null);
+        setCheckingFormPwned(false);
     }
 
     async function handleDelete(id: string) {
@@ -204,11 +405,17 @@ export default function VaultPage() {
         setVisiblePasswords(prev => ({ ...prev, [id]: !prev[id] }));
     };
 
-    const filteredItems = items.filter(item => 
-        item.name.toLowerCase().includes(search.toLowerCase()) ||
-        item.username.toLowerCase().includes(search.toLowerCase()) ||
-        item.url.toLowerCase().includes(search.toLowerCase())
-    );
+    const filteredItems = items
+        .filter(item => {
+            if (selectedFolderId === "all") return true;
+            if (selectedFolderId === "none") return !item.folderId;
+            return item.folderId === selectedFolderId;
+        })
+        .filter(item => 
+            item.name.toLowerCase().includes(search.toLowerCase()) ||
+            item.username.toLowerCase().includes(search.toLowerCase()) ||
+            item.url.toLowerCase().includes(search.toLowerCase())
+        );
 
     return (
         <div className="min-h-screen bg-slate-50/50">
@@ -226,8 +433,15 @@ export default function VaultPage() {
 
                     <div className="flex items-center gap-4">
                         <button
+                            onClick={() => setShowSecurityModal(true)}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-indigo-600 hover:bg-indigo-50/50 rounded-xl transition-all cursor-pointer"
+                        >
+                            <Shield className="w-4 h-4" />
+                            Double Auth (MFA)
+                        </button>
+                        <button
                             onClick={logout}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
                         >
                             <LogOut className="w-4 h-4" />
                             Déconnexion
@@ -320,6 +534,35 @@ export default function VaultPage() {
                                             </button>
                                         </div>
                                     </div>
+                                    {checkingFormPwned && (
+                                        <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 animate-pulse">
+                                            <RefreshCw className="w-3 h-3 animate-spin" />
+                                            Vérification HIBP...
+                                        </p>
+                                    )}
+                                    {!checkingFormPwned && formPwnedCount !== null && (
+                                        formPwnedCount > 0 ? (
+                                            <motion.div
+                                                initial={{ opacity: 0, y: -5 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                className="text-xs text-rose-600 bg-rose-50 border border-rose-100 p-2 rounded-xl flex items-start gap-1.5 mt-1"
+                                            >
+                                                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                                                <span>
+                                                    <strong>Compromis !</strong> Ce mot de passe est apparu {formPwnedCount.toLocaleString()} fois.
+                                                </span>
+                                            </motion.div>
+                                        ) : (
+                                            <motion.div
+                                                initial={{ opacity: 0, y: -5 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-100 p-2 rounded-xl flex items-start gap-1.5 mt-1"
+                                            >
+                                                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                                                <span>Mot de passe sûr (non compromis).</span>
+                                            </motion.div>
+                                        )
+                                    )}
                                 </div>
 
                                 <div className="space-y-1.5">
@@ -332,6 +575,23 @@ export default function VaultPage() {
                                             value={url}
                                             onChange={(e) => setUrl(e.target.value)}
                                         />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label className="text-sm font-semibold text-slate-600 ml-1">Dossier</label>
+                                    <div className="relative">
+                                        <FolderIcon className="absolute left-4 top-3.5 w-4 h-4 text-slate-400" />
+                                        <select
+                                            className="input-field pl-11 bg-white"
+                                            value={itemFolderId}
+                                            onChange={(e) => setItemFolderId(e.target.value)}
+                                        >
+                                            <option value="none">Aucun dossier (Racine)</option>
+                                            {folders.map(f => (
+                                                <option key={f.id} value={f.id}>{f.name}</option>
+                                            ))}
+                                        </select>
                                     </div>
                                 </div>
 
@@ -362,6 +622,164 @@ export default function VaultPage() {
                                     )}
                                 </button>
                             </form>
+                        </motion.div>
+
+                        {/* Folders Management Sidebar Card */}
+                        <motion.div
+                            layout
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="glass-card rounded-3xl p-6 border border-slate-100 space-y-4"
+                        >
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    <FolderIcon className="w-5 h-5 text-indigo-600" />
+                                    <h2 className="text-lg font-bold text-slate-800">Dossiers</h2>
+                                </div>
+                                <button
+                                    onClick={() => setIsCreatingFolder(!isCreatingFolder)}
+                                    className="p-1.5 hover:bg-indigo-50 rounded-xl text-indigo-600 transition-all cursor-pointer"
+                                >
+                                    <Plus className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            {isCreatingFolder && (
+                                <form onSubmit={handleCreateFolder} className="flex gap-2">
+                                    <input
+                                        className="input-field py-2 px-3 text-sm"
+                                        placeholder="Nom du dossier..."
+                                        value={newFolderName}
+                                        onChange={(e) => setNewFolderName(e.target.value)}
+                                        required
+                                        autoFocus
+                                    />
+                                    <button type="submit" className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl cursor-pointer shrink-0">
+                                        <Check className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setIsCreatingFolder(false); setNewFolderName(""); }}
+                                        className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-xl cursor-pointer shrink-0"
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </button>
+                                </form>
+                            )}
+
+                            <div className="space-y-1">
+                                <button
+                                    onClick={() => setSelectedFolderId("all")}
+                                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                                        selectedFolderId === "all"
+                                            ? "bg-indigo-50 text-indigo-600"
+                                            : "text-slate-600 hover:bg-slate-50/50"
+                                    }`}
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <FolderOpen className="w-4 h-4" />
+                                        Tous les éléments
+                                    </span>
+                                    <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                                        {items.length}
+                                    </span>
+                                </button>
+
+                                <button
+                                    onClick={() => setSelectedFolderId("none")}
+                                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                                        selectedFolderId === "none"
+                                            ? "bg-indigo-50 text-indigo-600"
+                                            : "text-slate-600 hover:bg-slate-50/50"
+                                    }`}
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <FolderIcon className="w-4 h-4 text-slate-400" />
+                                        Hors dossier
+                                    </span>
+                                    <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                                        {items.filter(i => !i.folderId).length}
+                                    </span>
+                                </button>
+
+                                <div className="w-full h-px bg-slate-100 my-2" />
+
+                                {folders.map(folder => {
+                                    const folderItemsCount = items.filter(i => i.folderId === folder.id).length;
+                                    const isEditing = editingFolderId === folder.id;
+
+                                    return (
+                                        <div key={folder.id} className="group flex items-center justify-between">
+                                            {isEditing ? (
+                                                <form 
+                                                    onSubmit={(e) => {
+                                                        e.preventDefault();
+                                                        handleRenameFolder(folder.id);
+                                                    }}
+                                                    className="flex gap-1.5 w-full py-1"
+                                                >
+                                                    <input
+                                                        className="input-field py-1 px-2 text-xs"
+                                                        value={editingFolderName}
+                                                        onChange={(e) => setEditingFolderName(e.target.value)}
+                                                        required
+                                                        autoFocus
+                                                    />
+                                                    <button
+                                                        type="submit"
+                                                        className="p-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer shrink-0"
+                                                    >
+                                                        <Check className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { setEditingFolderId(null); setEditingFolderName(""); }}
+                                                        className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-lg cursor-pointer shrink-0"
+                                                    >
+                                                        <X className="w-3.5 h-3.5" />
+                                                    </button>
+                                                </form>
+                                            ) : (
+                                                <>
+                                                    <button
+                                                        onClick={() => setSelectedFolderId(folder.id)}
+                                                        className={`flex-1 flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-all truncate cursor-pointer ${
+                                                            selectedFolderId === folder.id
+                                                                ? "bg-indigo-50 text-indigo-600"
+                                                                : "text-slate-600 hover:bg-slate-50/50"
+                                                        }`}
+                                                    >
+                                                        <span className="flex items-center gap-2 truncate">
+                                                            <FolderIcon className="w-4 h-4 shrink-0 text-indigo-400" />
+                                                            <span className="truncate">{folder.name}</span>
+                                                        </span>
+                                                        <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full shrink-0 group-hover:hidden">
+                                                            {folderItemsCount}
+                                                        </span>
+                                                    </button>
+                                                    <div className="hidden group-hover:flex items-center gap-1 pl-1">
+                                                        <button
+                                                            onClick={() => {
+                                                                setEditingFolderId(folder.id);
+                                                                setEditingFolderName(folder.name);
+                                                            }}
+                                                            className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-indigo-600 cursor-pointer"
+                                                        >
+                                                            <Pencil className="w-3.5 h-3.5" />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteFolder(folder.id)}
+                                                            className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer"
+                                                        >
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </motion.div>
                     </aside>
 
@@ -502,6 +920,16 @@ export default function VaultPage() {
                                                                 {copiedId === item.id && <span className="text-xs font-bold pr-1">Copié</span>}
                                                             </button>
                                                         </div>
+                                                        {pwnedCounts[item.password] !== undefined && pwnedCounts[item.password] > 0 && (
+                                                            <motion.span 
+                                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                                animate={{ opacity: 1, scale: 1 }}
+                                                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-2xl text-[11px] font-bold bg-rose-50 text-rose-600 border border-rose-100 shrink-0"
+                                                            >
+                                                                <AlertCircle className="w-3.5 h-3.5" />
+                                                                Compromis ({pwnedCounts[item.password].toLocaleString()} fuites)
+                                                            </motion.span>
+                                                        )}
                                                     </div>
 
                                                     {item.notes && (
@@ -521,6 +949,199 @@ export default function VaultPage() {
                     </div>
                 </div>
             </main>
+
+            {/* Security Modal */}
+            <AnimatePresence>
+                {showSecurityModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        {/* Backdrop */}
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => {
+                                setShowSecurityModal(false);
+                                setTotpSetupData(null);
+                                setVerifyCode("");
+                                setSecurityError("");
+                                setSecuritySuccess("");
+                            }}
+                            className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+                        />
+
+                        {/* Modal container */}
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                            className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden z-10 p-8 space-y-6"
+                        >
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Shield className="w-6 h-6 text-indigo-600" />
+                                    <h3 className="text-xl font-bold text-slate-800">
+                                        Double Authentification (MFA)
+                                    </h3>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        setShowSecurityModal(false);
+                                        setTotpSetupData(null);
+                                        setVerifyCode("");
+                                        setSecurityError("");
+                                        setSecuritySuccess("");
+                                    }}
+                                    className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-all cursor-pointer"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            {securitySuccess && (
+                                <div className="bg-green-50 border border-green-100 text-green-700 p-4 rounded-2xl flex items-center gap-3 animate-in">
+                                    <Check className="w-5 h-5 text-green-600 shrink-0" />
+                                    <p className="text-sm font-semibold">{securitySuccess}</p>
+                                </div>
+                            )}
+
+                            {securityError && (
+                                <div className="bg-red-50 border border-red-100 text-red-700 p-4 rounded-2xl flex items-center gap-3 animate-in">
+                                    <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+                                    <p className="text-sm font-semibold">{securityError}</p>
+                                </div>
+                            )}
+
+                            {mfaEnabled ? (
+                                <div className="space-y-6">
+                                    <div className="bg-indigo-50 border border-indigo-100/50 p-6 rounded-2xl text-center space-y-2">
+                                        <div className="mx-auto w-12 h-12 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-indigo-100">
+                                            <Shield className="w-6 h-6" />
+                                        </div>
+                                        <h4 className="font-bold text-indigo-900">La double authentification est activée</h4>
+                                        <p className="text-sm text-indigo-700">
+                                            Votre compte est protégé par une validation supplémentaire à chaque connexion.
+                                        </p>
+                                    </div>
+
+                                    <form onSubmit={handleDisableTotp} className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <label className="text-sm font-semibold text-slate-600 ml-1">
+                                                Désactiver la double authentification
+                                            </label>
+                                            <p className="text-xs text-slate-500 mb-2">
+                                                Saisissez un code à 6 chiffres pour confirmer la désactivation.
+                                            </p>
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    required
+                                                    pattern="[0-9]{6}"
+                                                    maxLength={6}
+                                                    className="input-field text-center tracking-[0.5em] font-bold"
+                                                    placeholder="000000"
+                                                    value={verifyCode}
+                                                    onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ""))}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            type="submit"
+                                            disabled={securityLoading || verifyCode.length !== 6}
+                                            className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3.5 rounded-2xl transition-all shadow-lg shadow-red-100 flex items-center justify-center gap-2 cursor-pointer"
+                                        >
+                                            {securityLoading ? (
+                                                <RefreshCw className="w-5 h-5 animate-spin" />
+                                            ) : (
+                                                "Désactiver MFA"
+                                            )}
+                                        </button>
+                                    </form>
+                                </div>
+                            ) : (
+                                <div className="space-y-6">
+                                    {!totpSetupData ? (
+                                        <div className="space-y-6">
+                                            <p className="text-slate-500 text-sm leading-relaxed">
+                                                Renforcez la sécurité de votre coffre en ajoutant un deuxième facteur d'authentification. Vous devrez saisir un code à usage unique généré par votre smartphone pour vous connecter.
+                                            </p>
+                                            <button
+                                                onClick={handleSetupTotp}
+                                                disabled={securityLoading}
+                                                className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 cursor-pointer"
+                                            >
+                                                {securityLoading ? (
+                                                    <RefreshCw className="w-5 h-5 animate-spin" />
+                                                ) : (
+                                                    "Configurer le TOTP"
+                                                )}
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-6">
+                                            <div className="space-y-4">
+                                                <p className="text-sm font-semibold text-slate-700">
+                                                    1. Scannez ce QR Code avec votre application d'authentification (Google Authenticator, Microsoft Authenticator, Bitwarden, Authy, etc.) :
+                                                </p>
+                                                
+                                                <div className="flex justify-center py-2">
+                                                    <img 
+                                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(totpSetupData.otpauthUri)}`} 
+                                                        alt="QR Code MFA" 
+                                                        className="border-4 border-slate-50 p-2 bg-white rounded-2xl shadow-md"
+                                                    />
+                                                </div>
+
+                                                <p className="text-xs font-semibold text-slate-500 text-center">
+                                                    Ou saisissez manuellement cette clé : 
+                                                    <code className="block bg-slate-50 text-indigo-600 font-mono text-sm py-1.5 px-3 rounded-lg border border-slate-100 select-all font-bold mt-1 text-center">
+                                                        {totpSetupData.secret}
+                                                    </code>
+                                                </p>
+                                            </div>
+
+                                            <div className="w-full h-px bg-slate-100" />
+
+                                            <form onSubmit={handleEnableTotp} className="space-y-4">
+                                                <div className="space-y-1.5">
+                                                    <label className="text-sm font-semibold text-slate-700">
+                                                        2. Confirmez l'activation :
+                                                    </label>
+                                                    <p className="text-xs text-slate-500 mb-2">
+                                                        Saisissez le code à 6 chiffres généré par votre application d'authentification.
+                                                    </p>
+                                                    <input
+                                                        type="text"
+                                                        required
+                                                        pattern="[0-9]{6}"
+                                                        maxLength={6}
+                                                        className="input-field text-center tracking-[0.5em] font-bold"
+                                                        placeholder="000000"
+                                                        value={verifyCode}
+                                                        onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ""))}
+                                                    />
+                                                </div>
+
+                                                <button
+                                                    type="submit"
+                                                    disabled={securityLoading || verifyCode.length !== 6}
+                                                    className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 cursor-pointer"
+                                                >
+                                                    {securityLoading ? (
+                                                        <RefreshCw className="w-5 h-5 animate-spin" />
+                                                    ) : (
+                                                        "Activer MFA"
+                                                    )}
+                                                </button>
+                                            </form>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

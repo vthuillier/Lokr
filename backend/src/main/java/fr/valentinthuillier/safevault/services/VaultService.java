@@ -7,6 +7,8 @@ import fr.valentinthuillier.safevault.models.User;
 import fr.valentinthuillier.safevault.models.VaultItem;
 import fr.valentinthuillier.safevault.repositories.VaultItemRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -20,8 +22,7 @@ public class VaultService {
 
     public VaultItemResponse create(
             User user,
-            CreateVaultItemRequest request
-    ) {
+            CreateVaultItemRequest request) {
 
         VaultItem item = VaultItem.builder()
                 .user(user)
@@ -52,14 +53,13 @@ public class VaultService {
     public VaultItemResponse update(
             UUID id,
             User user,
-            UpdateVaultItemRequest request
-    ) {
+            UpdateVaultItemRequest request) {
 
         VaultItem item = vaultItemRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Vault item not found"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Vault item not found"));
 
         if (!item.getUser().getId().equals(user.getId())) {
-            throw new RuntimeException("Forbidden");
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
 
         item.setEncryptedName(request.encryptedName());
@@ -76,10 +76,10 @@ public class VaultService {
 
     public void delete(UUID id, User user) {
         VaultItem item = vaultItemRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Vault item not found"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Vault item not found"));
 
         if (!item.getUser().getId().equals(user.getId())) {
-            throw new RuntimeException("Forbidden");
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Forbidden");
         }
 
         vaultItemRepository.deleteById(id);
@@ -89,6 +89,7 @@ public class VaultService {
 
         return new VaultItemResponse(
                 item.getId(),
+                item.getFolder() != null ? item.getFolder().getId() : null,
                 item.getEncryptedName(),
                 item.getEncryptedUsername(),
                 item.getEncryptedPassword(),
@@ -96,8 +97,7 @@ public class VaultService {
                 item.getEncryptedNotes(),
                 item.getNonce(),
                 item.getCreatedAt(),
-                item.getUpdatedAt()
-        );
+                item.getUpdatedAt());
     }
 
 }
