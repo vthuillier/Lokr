@@ -2,7 +2,7 @@
 
 **SafeVault** est un gestionnaire de mots de passe moderne, sécurisé et élégant, conçu pour offrir une expérience utilisateur premium tout en garantissant une sécurité maximale grâce au chiffrement local (**Zero-Knowledge**).
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![License: ELv2](https://img.shields.io/badge/license-ELv2-red.svg)
 ![Spring Boot](https://img.shields.io/badge/Backend-Spring%20Boot%203-brightgreen)
 ![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-blue)
 ![Tailwind](https://img.shields.io/badge/UI-Tailwind%20CSS%204-indigo)
@@ -81,7 +81,11 @@ npm run dev
 
 ## 📝 Licence
 
-Distribué sous la licence MIT. Voir `LICENSE` pour plus d'informations.
+Distribué sous la licence **Elastic License 2.0 (ELv2)**.
+
+Cette licence vous permet d'utiliser, copier, distribuer et modifier le logiciel librement, mais **interdit explicitement de fournir SafeVault à des tiers sous la forme d'un service géré ou hébergé** (SaaS commercial concurrent).
+
+Voir le fichier [LICENSE](file:///home/vthuillier/IdeaProjects/SafeVault/LICENSE) pour plus d'informations.
 
 ---
 
