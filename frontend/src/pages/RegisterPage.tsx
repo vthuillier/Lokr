@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { generateSalt, uint8ArrayToBase64, deriveKey, encryptText } from "../crypto/crypto";
+import { generateSalt, uint8ArrayToBase64, deriveKey, encryptText, generateRsaKeyPair } from "../crypto/crypto";
 import { checkPasswordPwned } from "../service/hibpService";
 import { motion } from "framer-motion";
 import { Shield, Mail, Lock, UserPlus, ArrowRight, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
@@ -54,21 +54,32 @@ export default function RegisterPage() {
             const derivedKey = await deriveKey(password, salt);
             const verification = await encryptText("VERIFIED", derivedKey);
 
+            // Generate and encrypt RSA Key Pair
+            const { publicKeySpki, privateKeyPkcs8 } = await generateRsaKeyPair();
+            const encryptedPriv = await encryptText(privateKeyPkcs8, derivedKey);
+
             const response = await api.post("/auth/register", {
                 email,
                 password,
                 kdfSalt: saltBase64,
                 encryptedVerification: verification.ciphertext,
-                verificationNonce: verification.iv
+                verificationNonce: verification.iv,
+                publicKey: publicKeySpki,
+                encryptedPrivateKey: encryptedPriv.ciphertext,
+                privateKeyNonce: encryptedPriv.iv
             });
 
+            localStorage.setItem("email", email);
             await setAuth(
                 response.data.token, 
                 password, 
                 saltBase64, 
                 verification.ciphertext, 
                 verification.iv,
-                remember
+                remember,
+                publicKeySpki,
+                encryptedPriv.ciphertext,
+                encryptedPriv.iv
             );
             navigate("/vault");
         } catch (err: any) {

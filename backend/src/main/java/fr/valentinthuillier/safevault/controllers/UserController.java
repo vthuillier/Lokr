@@ -1,6 +1,7 @@
 package fr.valentinthuillier.safevault.controllers;
 
 import fr.valentinthuillier.safevault.dto.MeResponse;
+import fr.valentinthuillier.safevault.dto.PublicKeyResponse;
 import fr.valentinthuillier.safevault.dto.TotpSetupResponse;
 import fr.valentinthuillier.safevault.dto.TotpVerifyRequest;
 import fr.valentinthuillier.safevault.models.User;
@@ -11,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -93,6 +95,16 @@ public class UserController {
         dbUser.setTotpEnabled(false);
         dbUser.setTotpSecret(null);
         userRepository.save(dbUser);
+    }
+
+    @GetMapping("/api/users/{email}/public-key")
+    public PublicKeyResponse getPublicKeyByEmail(@PathVariable String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Utilisateur introuvable"));
+        if (user.getPublicKey() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cet utilisateur n'a pas configuré de clé publique");
+        }
+        return new PublicKeyResponse(user.getPublicKey());
     }
 
 }

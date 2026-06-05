@@ -16,6 +16,9 @@ public record RegisterRequest(
         String kdfSalt,
 
         String encryptedVerification,
-        String verificationNonce
+        String verificationNonce,
+        String publicKey,
+        String encryptedPrivateKey,
+        String privateKeyNonce
 ) {
 }

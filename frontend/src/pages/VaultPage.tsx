@@ -2,8 +2,18 @@ import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
-import { encryptText, decryptText, generatePassword } from "../crypto/crypto";
-import type { VaultItem, Folder, DecryptedFolder } from "../types/vault";
+import { 
+    encryptText, 
+    decryptText, 
+    generatePassword,
+    generateGroupKey,
+    encryptWithPublicKey,
+    decryptWithPrivateKey,
+    importAesKey,
+    uint8ArrayToBase64,
+    base64ToUint8Array
+} from "../crypto/crypto";
+import type { VaultItem, Folder, DecryptedFolder, Group, GroupMember, DecryptedItem } from "../types/vault";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
     Plus, 
@@ -26,19 +36,12 @@ import {
     AlertCircle,
     CheckCircle2,
     Folder as FolderIcon,
-    FolderOpen
+    FolderOpen,
+    Users,
+    Settings,
+    UserPlus
 } from "lucide-react";
 import { checkPasswordPwned } from "../service/hibpService";
-
-type DecryptedItem = {
-    id: string;
-    name: string;
-    username: string;
-    password: string;
-    url: string;
-    notes: string;
-    folderId?: string | null;
-};
 
 const Favicon = ({ url }: { url: string }) => {
     const [error, setError] = useState(false);
@@ -69,7 +72,7 @@ const Favicon = ({ url }: { url: string }) => {
 };
 
 export default function VaultPage() {
-    const { derivedKey, logout } = useAuth();
+    const { derivedKey, logout, publicKey, privateKeyPkcs8 } = useAuth();
 
     const [items, setItems] = useState<DecryptedItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -100,6 +103,24 @@ export default function VaultPage() {
     const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
     const [editingFolderName, setEditingFolderName] = useState("");
 
+    // Sharing Groups State
+    const [groups, setGroups] = useState<Group[]>([]);
+    const [selectedGroupId, setSelectedGroupId] = useState<string>("all");
+    const [itemGroupId, setItemGroupId] = useState<string>("none");
+    const [groupCryptoKeys, setGroupCryptoKeys] = useState<Record<string, CryptoKey>>({});
+    const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+    const [newGroupName, setNewGroupName] = useState("");
+    
+    // Member Management Modal State
+    const [manageGroupId, setManageGroupId] = useState<string | null>(null);
+    const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+    const [newMemberEmail, setNewMemberEmail] = useState("");
+    const [newMemberRole, setNewMemberRole] = useState<"ADMIN" | "MEMBER" | "VIEWER">("MEMBER");
+    const [memberError, setMemberError] = useState("");
+    const [memberSuccess, setMemberSuccess] = useState("");
+    const [memberLoading, setMemberLoading] = useState(false);
+    const [loadingMembers, setLoadingMembers] = useState(false);
+
     // Security / MFA state
     const [showSecurityModal, setShowSecurityModal] = useState(false);
     const [mfaEnabled, setMfaEnabled] = useState(false);
@@ -115,7 +136,7 @@ export default function VaultPage() {
             loadFolders();
             checkMfaStatus();
         }
-    }, [derivedKey]);
+    }, [derivedKey, privateKeyPkcs8]);
 
     // Real-time HIBP check for form password input
     useEffect(() => {
@@ -211,31 +232,187 @@ export default function VaultPage() {
 
         try {
             setLoading(true);
+            
+            // First load and decrypt group keys to ensure we can decrypt group items
+            let currentGroupKeys = { ...groupCryptoKeys };
+            if (privateKeyPkcs8) {
+                try {
+                    const groupsResponse = await api.get<Group[]>("/groups");
+                    setGroups(groupsResponse.data);
+                    for (const g of groupsResponse.data) {
+                        if (!currentGroupKeys[g.id]) {
+                            try {
+                                const rawKeyBytes = await decryptWithPrivateKey(privateKeyPkcs8, g.encryptedGroupKey);
+                                const base64Key = uint8ArrayToBase64(rawKeyBytes);
+                                const cryptoKey = await importAesKey(base64Key);
+                                currentGroupKeys[g.id] = cryptoKey;
+                            } catch (err) {
+                                console.error(`Failed to decrypt key for group ${g.name}:`, err);
+                            }
+                        }
+                    }
+                    setGroupCryptoKeys(currentGroupKeys);
+                } catch (err) {
+                    console.error("Failed to load groups for items:", err);
+                }
+            }
+
             const response = await api.get<VaultItem[]>("/vault/items");
             const decrypted = await Promise.all(
-                response.data.map(async (item) => ({
-                    id: item.id,
-                    folderId: item.folderId,
-                    name: await decryptText(item.encryptedName, item.nonce, derivedKey),
-                    username: item.encryptedUsername
-                        ? await decryptText(item.encryptedUsername, item.nonce, derivedKey)
-                        : "",
-                    password: item.encryptedPassword
-                        ? await decryptText(item.encryptedPassword, item.nonce, derivedKey)
-                        : "",
-                    url: item.encryptedUrl
-                        ? await decryptText(item.encryptedUrl, item.nonce, derivedKey)
-                        : "",
-                    notes: item.encryptedNotes
-                        ? await decryptText(item.encryptedNotes, item.nonce, derivedKey)
-                        : "",
-                }))
+                response.data.map(async (item) => {
+                    // Choose correct key based on item ownership (personal vs group)
+                    let decryptionKey = derivedKey;
+                    if (item.groupId) {
+                        const gKey = currentGroupKeys[item.groupId];
+                        if (gKey) {
+                            decryptionKey = gKey;
+                        } else {
+                            // Key not found or failed to decrypt
+                            return {
+                                id: item.id,
+                                folderId: item.folderId,
+                                groupId: item.groupId,
+                                name: "[Chiffré - clé groupe introuvable]",
+                                username: "",
+                                password: "",
+                                url: "",
+                                notes: ""
+                            };
+                        }
+                    }
+
+                    return {
+                        id: item.id,
+                        folderId: item.folderId,
+                        groupId: item.groupId,
+                        name: await decryptText(item.encryptedName, item.nonce, decryptionKey),
+                        username: item.encryptedUsername
+                            ? await decryptText(item.encryptedUsername, item.nonce, decryptionKey)
+                            : "",
+                        password: item.encryptedPassword
+                            ? await decryptText(item.encryptedPassword, item.nonce, decryptionKey)
+                            : "",
+                        url: item.encryptedUrl
+                            ? await decryptText(item.encryptedUrl, item.nonce, decryptionKey)
+                            : "",
+                        notes: item.encryptedNotes
+                            ? await decryptText(item.encryptedNotes, item.nonce, decryptionKey)
+                            : "",
+                    };
+                })
             );
             setItems(decrypted);
         } catch (err) {
             console.error("Failed to load items:", err);
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function loadMembers(groupId: string) {
+        try {
+            setLoadingMembers(true);
+            const response = await api.get<GroupMember[]>(`/groups/${groupId}/members`);
+            setGroupMembers(response.data);
+        } catch (err) {
+            console.error("Failed to load group members:", err);
+        } finally {
+            setLoadingMembers(false);
+        }
+    }
+
+    async function handleAddMember(e: React.FormEvent) {
+        e.preventDefault();
+        if (!manageGroupId || !newMemberEmail.trim()) return;
+        try {
+            setMemberLoading(true);
+            setMemberError("");
+            setMemberSuccess("");
+
+            // 1. Get new member's public key
+            const pubKeyRes = await api.get<{ publicKey: string }>(`/users/${encodeURIComponent(newMemberEmail.trim())}/public-key`);
+            const memberPublicKey = pubKeyRes.data.publicKey;
+
+            // 2. Export our group key
+            const groupKey = groupCryptoKeys[manageGroupId];
+            if (!groupKey) {
+                throw new Error("Clé de groupe manquante pour le chiffrement.");
+            }
+            const rawKeyBuffer = await window.crypto.subtle.exportKey("raw", groupKey);
+            const rawKeyBytes = new Uint8Array(rawKeyBuffer);
+
+            // 3. Encrypt group key with new member's public key
+            const encryptedGroupKey = await encryptWithPublicKey(memberPublicKey, rawKeyBytes);
+
+            // 4. Send API request
+            await api.post(`/groups/${manageGroupId}/members`, {
+                email: newMemberEmail.trim(),
+                encryptedGroupKey,
+                role: newMemberRole
+            });
+
+            setNewMemberEmail("");
+            setMemberSuccess("Membre ajouté avec succès !");
+            await loadMembers(manageGroupId);
+        } catch (err: any) {
+            console.error(err);
+            setMemberError(err.response?.data?.message || err.message || "Erreur lors de l'ajout du membre.");
+        } finally {
+            setMemberLoading(false);
+        }
+    }
+
+    async function handleUpdateMemberRole(userId: string, role: "ADMIN" | "MEMBER" | "VIEWER") {
+        if (!manageGroupId) return;
+        try {
+            await api.put(`/groups/${manageGroupId}/members/${userId}`, { role });
+            await loadMembers(manageGroupId);
+        } catch (err: any) {
+            alert(err.response?.data?.message || "Erreur lors de la mise à jour du rôle.");
+        }
+    }
+
+    async function handleRemoveMember(userId: string) {
+        if (!manageGroupId) return;
+        if (!confirm("Voulez-vous vraiment retirer ce membre du groupe ?")) return;
+        try {
+            await api.delete(`/groups/${manageGroupId}/members/${userId}`);
+            await loadMembers(manageGroupId);
+        } catch (err: any) {
+            alert(err.response?.data?.message || "Erreur lors du retrait du membre.");
+        }
+    }
+
+    async function handleCreateGroup(e: React.FormEvent) {
+        e.preventDefault();
+        if (!newGroupName.trim() || !publicKey) return;
+        try {
+            const rawKeyBase64 = await generateGroupKey();
+            const encryptedGroupKey = await encryptWithPublicKey(publicKey, base64ToUint8Array(rawKeyBase64));
+            
+            await api.post("/groups", {
+                name: newGroupName.trim(),
+                encryptedGroupKey
+            });
+            
+            setNewGroupName("");
+            setIsCreatingGroup(false);
+            await loadItems(); // Refresh items/groups/keys
+        } catch (err) {
+            console.error("Failed to create group:", err);
+        }
+    }
+
+    async function handleDeleteGroup(groupId: string) {
+        if (!confirm("Voulez-vous vraiment supprimer ce groupe ? Tous ses identifiants associés seront inaccessibles.")) return;
+        try {
+            await api.delete(`/groups/${groupId}`);
+            if (selectedGroupId === groupId) {
+                setSelectedGroupId("all");
+            }
+            await loadItems();
+        } catch (err) {
+            console.error("Failed to delete group:", err);
         }
     }
 
@@ -312,11 +489,21 @@ export default function VaultPage() {
             setSaving(true);
             const iv = crypto.getRandomValues(new Uint8Array(12));
             
-            const encryptedName = await encryptText(name, derivedKey, iv);
-            const encryptedUsername = await encryptText(username, derivedKey, iv);
-            const encryptedPassword = await encryptText(password, derivedKey, iv);
-            const encryptedUrl = await encryptText(url, derivedKey, iv);
-            const encryptedNotes = await encryptText(notes, derivedKey, iv);
+            let encryptionKey = derivedKey;
+            if (itemGroupId && itemGroupId !== "none") {
+                const gKey = groupCryptoKeys[itemGroupId];
+                if (!gKey) {
+                    alert("Clé de groupe introuvable. Impossible de chiffrer.");
+                    return;
+                }
+                encryptionKey = gKey;
+            }
+            
+            const encryptedName = await encryptText(name, encryptionKey, iv);
+            const encryptedUsername = await encryptText(username, encryptionKey, iv);
+            const encryptedPassword = await encryptText(password, encryptionKey, iv);
+            const encryptedUrl = await encryptText(url, encryptionKey, iv);
+            const encryptedNotes = await encryptText(notes, encryptionKey, iv);
 
             const payload = {
                 encryptedName: encryptedName.ciphertext,
@@ -325,6 +512,7 @@ export default function VaultPage() {
                 encryptedUrl: encryptedUrl.ciphertext,
                 encryptedNotes: encryptedNotes.ciphertext,
                 nonce: encryptedName.iv,
+                groupId: itemGroupId === "none" ? null : itemGroupId
             };
 
             if (editingId) {
@@ -364,6 +552,7 @@ export default function VaultPage() {
         setUrl(item.url);
         setNotes(item.notes);
         setItemFolderId(item.folderId || "none");
+        setItemGroupId(item.groupId || "none");
         setShowFormPassword(false);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -376,6 +565,7 @@ export default function VaultPage() {
         setUrl("");
         setNotes("");
         setItemFolderId("none");
+        setItemGroupId("none");
         setShowFormPassword(false);
         setFormPwnedCount(null);
         setCheckingFormPwned(false);
@@ -410,6 +600,11 @@ export default function VaultPage() {
             if (selectedFolderId === "all") return true;
             if (selectedFolderId === "none") return !item.folderId;
             return item.folderId === selectedFolderId;
+        })
+        .filter(item => {
+            if (selectedGroupId === "all") return true;
+            if (selectedGroupId === "personal") return !item.groupId;
+            return item.groupId === selectedGroupId;
         })
         .filter(item => 
             item.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -596,6 +791,30 @@ export default function VaultPage() {
                                 </div>
 
                                 <div className="space-y-1.5">
+                                    <label className="text-sm font-semibold text-slate-600 ml-1">Coffre / Groupe</label>
+                                    <div className="relative">
+                                        <Users className="absolute left-4 top-3.5 w-4 h-4 text-slate-400" />
+                                        <select
+                                            className="input-field pl-11 bg-white"
+                                            value={itemGroupId}
+                                            onChange={(e) => setItemGroupId(e.target.value)}
+                                        >
+                                            <option value="none">Coffre Personnel</option>
+                                            {groups.map(g => (
+                                                <option key={g.id} value={g.id}>
+                                                    {g.name} {g.role === "VIEWER" ? "(Lecture seule)" : ""}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    {itemGroupId !== "none" && groups.find(g => g.id === itemGroupId)?.role === "VIEWER" && (
+                                        <span className="text-xs text-rose-500 font-semibold mt-1 block">
+                                            ⚠️ Vous avez un accès en lecture seule dans ce groupe.
+                                        </span>
+                                    )}
+                                </div>
+
+                                <div className="space-y-1.5">
                                     <label className="text-sm font-semibold text-slate-600 ml-1">Notes</label>
                                     <div className="relative">
                                         <FileText className="absolute left-4 top-3.5 w-4 h-4 text-slate-400" />
@@ -609,7 +828,7 @@ export default function VaultPage() {
                                 </div>
 
                                 <button 
-                                    disabled={saving || !name}
+                                    disabled={saving || !name || (itemGroupId !== "none" && groups.find(g => g.id === itemGroupId)?.role === "VIEWER")}
                                     className={`btn-primary w-full mt-4 flex items-center justify-center gap-2 transition-all ${editingId ? 'bg-indigo-700 shadow-indigo-200' : ''}`}
                                 >
                                     {saving ? (
@@ -781,6 +1000,134 @@ export default function VaultPage() {
                                 })}
                             </div>
                         </motion.div>
+
+                        {/* Sharing Groups Management Sidebar Card */}
+                        <motion.div
+                            layout
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="glass-card rounded-3xl p-6 border border-slate-100 space-y-4"
+                        >
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    <Users className="w-5 h-5 text-indigo-600" />
+                                    <h2 className="text-lg font-bold text-slate-800">Groupes de partage</h2>
+                                </div>
+                                <button
+                                    onClick={() => setIsCreatingGroup(!isCreatingGroup)}
+                                    className="p-1.5 hover:bg-indigo-50 rounded-xl text-indigo-600 transition-all cursor-pointer"
+                                >
+                                    <Plus className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            {isCreatingGroup && (
+                                <form onSubmit={handleCreateGroup} className="flex gap-2">
+                                    <input
+                                        className="input-field py-2 px-3 text-sm"
+                                        placeholder="Nom du groupe..."
+                                        value={newGroupName}
+                                        onChange={(e) => setNewGroupName(e.target.value)}
+                                        required
+                                        autoFocus
+                                    />
+                                    <button type="submit" className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl cursor-pointer shrink-0">
+                                        <Check className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setIsCreatingGroup(false); setNewGroupName(""); }}
+                                        className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-xl cursor-pointer shrink-0"
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </button>
+                                </form>
+                            )}
+
+                            <div className="space-y-1">
+                                <button
+                                    onClick={() => setSelectedGroupId("all")}
+                                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                                        selectedGroupId === "all"
+                                            ? "bg-indigo-50 text-indigo-600"
+                                            : "text-slate-600 hover:bg-slate-50/50"
+                                    }`}
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <Shield className="w-4 h-4 text-slate-400" />
+                                        Tous les coffres
+                                    </span>
+                                    <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                                        {items.length}
+                                    </span>
+                                </button>
+
+                                <button
+                                    onClick={() => setSelectedGroupId("personal")}
+                                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                                        selectedGroupId === "personal"
+                                            ? "bg-indigo-50 text-indigo-600"
+                                            : "text-slate-600 hover:bg-slate-50/50"
+                                    }`}
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <UserIcon className="w-4 h-4 text-slate-400" />
+                                        Coffre Personnel
+                                    </span>
+                                    <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                                        {items.filter(i => !i.groupId).length}
+                                    </span>
+                                </button>
+
+                                <div className="w-full h-px bg-slate-100 my-2" />
+
+                                {groups.map(group => {
+                                    const groupItemsCount = items.filter(i => i.groupId === group.id).length;
+
+                                    return (
+                                        <div key={group.id} className="group flex items-center justify-between">
+                                            <button
+                                                onClick={() => setSelectedGroupId(group.id)}
+                                                className={`flex-1 flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold transition-all truncate cursor-pointer ${
+                                                    selectedGroupId === group.id
+                                                        ? "bg-indigo-50 text-indigo-600"
+                                                        : "text-slate-600 hover:bg-slate-50/50"
+                                                }`}
+                                            >
+                                                <span className="flex items-center gap-2 truncate">
+                                                    <Users className="w-4 h-4 shrink-0 text-indigo-400" />
+                                                    <span className="truncate">{group.name}</span>
+                                                </span>
+                                                <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full shrink-0 group-hover:hidden">
+                                                    {groupItemsCount}
+                                                </span>
+                                            </button>
+                                            <div className="hidden group-hover:flex items-center gap-1 pl-1">
+                                                <button
+                                                    onClick={() => {
+                                                        setManageGroupId(group.id);
+                                                        loadMembers(group.id);
+                                                    }}
+                                                    className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-indigo-600 cursor-pointer"
+                                                    title="Gérer les membres"
+                                                >
+                                                    <Settings className="w-3.5 h-3.5" />
+                                                </button>
+                                                {group.role === "ADMIN" && (
+                                                    <button
+                                                        onClick={() => handleDeleteGroup(group.id)}
+                                                        className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer"
+                                                        title="Supprimer le groupe"
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </motion.div>
                     </aside>
 
                     {/* Main Content / Items List */}
@@ -852,6 +1199,12 @@ export default function VaultPage() {
                                                                     >
                                                                         <ExternalLink className="w-4 h-4" />
                                                                     </a>
+                                                                )}
+                                                                {item.groupId && (
+                                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-100 shrink-0">
+                                                                        <Users className="w-2.5 h-2.5" />
+                                                                        {groups.find(g => g.id === item.groupId)?.name || "Partagé"}
+                                                                    </span>
                                                                 )}
                                                             </h3>
                                                             <p className="text-slate-500 text-sm font-medium truncate">{item.username}</p>
@@ -1138,6 +1491,151 @@ export default function VaultPage() {
                                     )}
                                 </div>
                             )}
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
+            {/* Manage Members Modal */}
+            <AnimatePresence>
+                {manageGroupId && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => {
+                                setManageGroupId(null);
+                                setMemberError("");
+                                setMemberSuccess("");
+                                setNewMemberEmail("");
+                            }}
+                            className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+                        />
+
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                            className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden z-10 p-8 space-y-6"
+                        >
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Users className="w-6 h-6 text-indigo-600" />
+                                    <h3 className="text-xl font-bold text-slate-800">
+                                        Membres du groupe - {groups.find(g => g.id === manageGroupId)?.name}
+                                    </h3>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        setManageGroupId(null);
+                                        setMemberError("");
+                                        setMemberSuccess("");
+                                        setNewMemberEmail("");
+                                    }}
+                                    className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-all cursor-pointer"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            {memberSuccess && (
+                                <div className="bg-green-50 border border-green-100 text-green-700 p-4 rounded-2xl flex items-center gap-3 animate-in">
+                                    <Check className="w-5 h-5 text-green-600 shrink-0" />
+                                    <p className="text-sm font-semibold">{memberSuccess}</p>
+                                </div>
+                            )}
+
+                            {memberError && (
+                                <div className="bg-red-50 border border-red-100 text-red-700 p-4 rounded-2xl flex items-center gap-3 animate-in">
+                                    <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+                                    <p className="text-sm font-semibold">{memberError}</p>
+                                </div>
+                            )}
+
+                            {/* Add Member Form (Admins only) */}
+                            {groups.find(g => g.id === manageGroupId)?.role === "ADMIN" && (
+                                <form onSubmit={handleAddMember} className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ajouter un membre</h4>
+                                    <div className="flex flex-col gap-3 sm:flex-row">
+                                        <input
+                                            type="email"
+                                            required
+                                            className="input-field py-2.5 px-4 text-sm flex-1"
+                                            placeholder="email@utilisateur.com"
+                                            value={newMemberEmail}
+                                            onChange={(e) => setNewMemberEmail(e.target.value)}
+                                        />
+                                        <select
+                                            className="input-field py-2.5 px-4 text-sm bg-white sm:w-32"
+                                            value={newMemberRole}
+                                            onChange={(e) => setNewMemberRole(e.target.value as any)}
+                                        >
+                                            <option value="MEMBER">Membre</option>
+                                            <option value="ADMIN">Admin</option>
+                                            <option value="VIEWER">Lecteur</option>
+                                        </select>
+                                        <button
+                                            type="submit"
+                                            disabled={memberLoading}
+                                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm transition-all shadow-md shadow-indigo-100 flex items-center justify-center gap-2 cursor-pointer shrink-0"
+                                        >
+                                            {memberLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                                            Ajouter
+                                        </button>
+                                    </div>
+                                </form>
+                            )}
+
+                            {/* Members List */}
+                            <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Membres actuels ({groupMembers.length})</h4>
+                                {loadingMembers ? (
+                                    <div className="flex justify-center py-6">
+                                        <RefreshCw className="w-6 h-6 text-indigo-600 animate-spin" />
+                                    </div>
+                                ) : (
+                                    groupMembers.map((member) => {
+                                        const isCurrentUser = member.email === localStorage.getItem("email");
+                                        const currentGroupRole = groups.find(g => g.id === manageGroupId)?.role;
+                                        const canManage = currentGroupRole === "ADMIN" && !isCurrentUser;
+
+                                        return (
+                                            <div key={member.userId} className="flex items-center justify-between p-3 bg-slate-50/50 border border-slate-100 rounded-2xl">
+                                                <div className="min-w-0">
+                                                    <p className="text-sm font-bold text-slate-800 truncate">
+                                                        {member.email} {isCurrentUser && <span className="text-xs text-indigo-600 font-semibold">(Vous)</span>}
+                                                    </p>
+                                                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mt-0.5">
+                                                        {member.role === "ADMIN" ? "Administrateur" : member.role === "MEMBER" ? "Membre" : "Lecteur"}
+                                                    </p>
+                                                </div>
+
+                                                {canManage && (
+                                                    <div className="flex items-center gap-2">
+                                                        <select
+                                                            className="text-xs bg-white border border-slate-200 rounded-lg p-1 font-semibold"
+                                                            value={member.role}
+                                                            onChange={(e) => handleUpdateMemberRole(member.userId, e.target.value as any)}
+                                                        >
+                                                            <option value="MEMBER">Membre</option>
+                                                            <option value="ADMIN">Admin</option>
+                                                            <option value="VIEWER">Lecteur</option>
+                                                        </select>
+                                                        <button
+                                                            onClick={() => handleRemoveMember(member.userId)}
+                                                            className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-lg transition-colors cursor-pointer"
+                                                            title="Retirer le membre"
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
                         </motion.div>
                     </div>
                 )}

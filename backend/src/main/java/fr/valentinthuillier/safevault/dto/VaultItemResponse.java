@@ -9,6 +9,8 @@ public record VaultItemResponse(
 
                 UUID folderId,
 
+                UUID groupId,
+
                 String encryptedName,
 
                 String encryptedUsername,

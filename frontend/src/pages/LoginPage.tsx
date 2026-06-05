@@ -40,13 +40,17 @@ export default function LoginPage() {
                 return;
             }
 
+            localStorage.setItem("email", email);
             await setAuth(
                 response.data.token, 
                 password, 
                 response.data.kdfSalt,
                 response.data.encryptedVerification,
                 response.data.verificationNonce,
-                remember
+                remember,
+                response.data.publicKey,
+                response.data.encryptedPrivateKey,
+                response.data.privateKeyNonce
             );
             navigate("/vault");
         } catch (err: any) {

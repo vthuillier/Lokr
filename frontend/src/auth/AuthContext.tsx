@@ -7,6 +7,8 @@ interface AuthContextType {
     salt: string | null;
     masterPassword: string | null;
     derivedKey: CryptoKey | null;
+    publicKey: string | null;
+    privateKeyPkcs8: string | null;
     isAuthenticated: boolean;
     isLocked: boolean;
     setAuth: (
@@ -15,7 +17,10 @@ interface AuthContextType {
         salt: string, 
         encryptedVerification?: string, 
         verificationNonce?: string,
-        remember?: boolean
+        remember?: boolean,
+        publicKey?: string | null,
+        encryptedPrivateKey?: string | null,
+        privateKeyNonce?: string | null
     ) => Promise<void>;
     logout: () => void;
     unlock: (masterPassword: string, salt: string, remember?: boolean) => Promise<void>;
@@ -27,6 +32,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [token, setToken] = useState<string | null>(localStorage.getItem("token"));
     const [salt, setSalt] = useState<string | null>(localStorage.getItem("kdfSalt"));
     const [derivedKey, setDerivedKey] = useState<CryptoKey | null>(null);
+    const [publicKey, setPublicKey] = useState<string | null>(localStorage.getItem("pubKey"));
+    const [privateKeyPkcs8, setPrivateKeyPkcs8] = useState<string | null>(null);
 
     const isAuthenticated = !!token;
     const isLocked = isAuthenticated && !derivedKey;
@@ -49,7 +56,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saltBase64: string,
         encryptedVerification?: string,
         verificationNonce?: string,
-        remember: boolean = false
+        remember: boolean = false,
+        pubKey?: string | null,
+        encPrivKey?: string | null,
+        privKeyNonce?: string | null
     ) {
         localStorage.setItem("token", newToken);
         localStorage.setItem("kdfSalt", saltBase64);
@@ -65,8 +75,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (encryptedVerification) localStorage.setItem("vEnc", encryptedVerification);
         if (verificationNonce) localStorage.setItem("vNonce", verificationNonce);
         
+        if (pubKey) localStorage.setItem("pubKey", pubKey);
+        if (encPrivKey) localStorage.setItem("encPriv", encPrivKey);
+        if (privKeyNonce) localStorage.setItem("privNonce", privKeyNonce);
+        
         setToken(newToken);
         setSalt(saltBase64);
+        if (pubKey) setPublicKey(pubKey);
         
         await unlock(newMasterPassword, saltBase64, remember);
     }
@@ -100,6 +115,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
         }
 
+        // Decrypt private key
+        const encPriv = localStorage.getItem("encPriv");
+        const privNonce = localStorage.getItem("privNonce");
+        if (encPriv && privNonce) {
+            try {
+                const decryptedPriv = await decryptText(encPriv, privNonce, key);
+                setPrivateKeyPkcs8(decryptedPriv);
+            } catch (err) {
+                console.error("Failed to decrypt private key", err);
+            }
+        }
+        
+        const pubKey = localStorage.getItem("pubKey");
+        if (pubKey) {
+            setPublicKey(pubKey);
+        }
+
         setDerivedKey(key);
     }
 
@@ -109,10 +141,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("vEnc");
         localStorage.removeItem("vNonce");
         localStorage.removeItem("mp_p");
+        localStorage.removeItem("pubKey");
+        localStorage.removeItem("encPriv");
+        localStorage.removeItem("privNonce");
+        localStorage.removeItem("email");
         sessionStorage.removeItem("mp");
         setToken(null);
         setSalt(null);
         setDerivedKey(null);
+        setPublicKey(null);
+        setPrivateKeyPkcs8(null);
     }
 
     return (
@@ -121,6 +159,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             salt,
             masterPassword: null,
             derivedKey, 
+            publicKey,
+            privateKeyPkcs8,
             isAuthenticated, 
             isLocked, 
             setAuth, 

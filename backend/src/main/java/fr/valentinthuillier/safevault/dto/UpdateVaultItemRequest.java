@@ -16,7 +16,9 @@ public record UpdateVaultItemRequest(
         String encryptedNotes,
 
         @NotBlank
-        String nonce
+        String nonce,
+
+        java.util.UUID groupId
 
 ) {
 }

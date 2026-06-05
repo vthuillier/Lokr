@@ -50,6 +50,10 @@ public class VaultItem {
     @JoinColumn(name = "folder_id", nullable = true)
     private Folder folder;
 
+    @ManyToOne(fetch = FetchType.LAZY, optional = true)
+    @JoinColumn(name = "group_id", nullable = true)
+    private Group group;
+
     @PrePersist
     public void prePersist() {
         if (id == null) {

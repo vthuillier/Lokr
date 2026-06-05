@@ -45,6 +45,15 @@ public class User {
     @Column(name = "totp_enabled", nullable = false, columnDefinition = "BOOLEAN")
     private boolean totpEnabled;
 
+    @Column(name = "public_key", columnDefinition = "TEXT")
+    private String publicKey;
+
+    @Column(name = "encrypted_private_key", columnDefinition = "TEXT")
+    private String encryptedPrivateKey;
+
+    @Column(name = "private_key_nonce", columnDefinition = "TEXT")
+    private String privateKeyNonce;
+
     @PrePersist
     public void prePersist() {
         if (id == null) {

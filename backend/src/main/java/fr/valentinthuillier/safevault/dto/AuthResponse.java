@@ -6,5 +6,8 @@ public record AuthResponse(
                 String encryptedVerification,
                 String verificationNonce,
                 boolean totpEnabled,
-                String totpSecret) {
+                String totpSecret,
+                String publicKey,
+                String encryptedPrivateKey,
+                String privateKeyNonce) {
 }

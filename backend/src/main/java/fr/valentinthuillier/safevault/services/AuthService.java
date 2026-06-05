@@ -37,6 +37,9 @@ public class AuthService {
                                 .kdfAlgorithm("Argon2id")
                                 .encryptedVerification(registerRequest.encryptedVerification())
                                 .verificationNonce(registerRequest.verificationNonce())
+                                .publicKey(registerRequest.publicKey())
+                                .encryptedPrivateKey(registerRequest.encryptedPrivateKey())
+                                .privateKeyNonce(registerRequest.privateKeyNonce())
                                 .build();
 
                 userRepository.save(user);
@@ -49,7 +52,10 @@ public class AuthService {
                                 user.getEncryptedVerification(),
                                 user.getVerificationNonce(),
                                 user.isTotpEnabled(),
-                                user.getTotpSecret());
+                                user.getTotpSecret(),
+                                user.getPublicKey(),
+                                user.getEncryptedPrivateKey(),
+                                user.getPrivateKeyNonce());
 
         }
 
@@ -77,6 +83,9 @@ public class AuthService {
                                                 null,
                                                 null,
                                                 true,
+                                                null,
+                                                null,
+                                                null,
                                                 null);
                         }
 
@@ -95,7 +104,10 @@ public class AuthService {
                                 user.getEncryptedVerification(),
                                 user.getVerificationNonce(),
                                 user.isTotpEnabled(),
-                                null);
+                                null,
+                                user.getPublicKey(),
+                                user.getEncryptedPrivateKey(),
+                                user.getPrivateKeyNonce());
 
         }
 

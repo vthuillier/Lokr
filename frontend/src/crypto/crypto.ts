@@ -117,3 +117,92 @@ export function generatePassword(length: number = 16): string {
     }
     return retVal;
 }
+
+export async function generateRsaKeyPair(): Promise<{ publicKeySpki: string; privateKeyPkcs8: string }> {
+    const subtle = getSubtleCrypto();
+    const pair = await subtle.generateKey(
+        {
+            name: "RSA-OAEP",
+            modulusLength: 2048,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: "SHA-256",
+        },
+        true,
+        ["encrypt", "decrypt"]
+    );
+
+    const pubExport = await subtle.exportKey("spki", pair.publicKey);
+    const privExport = await subtle.exportKey("pkcs8", pair.privateKey);
+
+    return {
+        publicKeySpki: uint8ArrayToBase64(new Uint8Array(pubExport)),
+        privateKeyPkcs8: uint8ArrayToBase64(new Uint8Array(privExport)),
+    };
+}
+
+export async function encryptWithPublicKey(publicKeySpkiBase64: string, data: Uint8Array): Promise<string> {
+    const subtle = getSubtleCrypto();
+    const pubKeyBytes = base64ToUint8Array(publicKeySpkiBase64);
+    const pubKey = await subtle.importKey(
+        "spki",
+        pubKeyBytes as any,
+        {
+            name: "RSA-OAEP",
+            hash: "SHA-256",
+        },
+        false,
+        ["encrypt"]
+    );
+    const encrypted = await subtle.encrypt(
+        {
+            name: "RSA-OAEP",
+        },
+        pubKey,
+        data as any
+    );
+    return uint8ArrayToBase64(new Uint8Array(encrypted));
+}
+
+export async function decryptWithPrivateKey(privateKeyPkcs8Base64: string, encryptedDataBase64: string): Promise<Uint8Array> {
+    const subtle = getSubtleCrypto();
+    const privKeyBytes = base64ToUint8Array(privateKeyPkcs8Base64);
+    const privKey = await subtle.importKey(
+        "pkcs8",
+        privKeyBytes as any,
+        {
+            name: "RSA-OAEP",
+            hash: "SHA-256",
+        },
+        false,
+        ["decrypt"]
+    );
+    const encryptedBytes = base64ToUint8Array(encryptedDataBase64);
+    const decrypted = await subtle.decrypt(
+        {
+            name: "RSA-OAEP",
+        },
+        privKey,
+        encryptedBytes as any
+    );
+    return new Uint8Array(decrypted);
+}
+
+export async function generateGroupKey(): Promise<string> {
+    const keyBytes = crypto.getRandomValues(new Uint8Array(32)); // 256 bits
+    return uint8ArrayToBase64(keyBytes);
+}
+
+export async function importAesKey(base64Key: string): Promise<CryptoKey> {
+    const subtle = getSubtleCrypto();
+    const keyBytes = base64ToUint8Array(base64Key);
+    return subtle.importKey(
+        "raw",
+        keyBytes as any,
+        {
+            name: "AES-GCM",
+            length: 256
+        },
+        false,
+        ["encrypt", "decrypt"]
+    );
+}
