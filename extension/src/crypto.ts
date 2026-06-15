@@ -52,3 +52,16 @@ export function uint8ArrayToBase64(bytes: Uint8Array): string {
     }
     return btoa(binary);
 }
+
+export async function encryptText(text: string, key: CryptoKey, iv: Uint8Array): Promise<{ ciphertext: string; iv: string }> {
+    const encoder = new TextEncoder();
+    const encrypted = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv as any },
+        key,
+        encoder.encode(text)
+    );
+    return {
+        ciphertext: uint8ArrayToBase64(new Uint8Array(encrypted)),
+        iv: uint8ArrayToBase64(iv)
+    };
+}
