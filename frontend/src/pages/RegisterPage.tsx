@@ -100,7 +100,7 @@ export default function RegisterPage() {
                     <div className="mx-auto h-16 w-16 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-200 mb-6">
                         <Shield className="w-8 h-8" />
                     </div>
-                    <h2 className="text-3xl font-bold text-slate-900">Bienvenue sur SafeVault</h2>
+                    <h2 className="text-3xl font-bold text-slate-900">Bienvenue sur Lokr</h2>
                     <p className="mt-2 text-slate-500 font-medium">
                         Créez votre coffre-fort chiffré en quelques secondes.
                     </p>

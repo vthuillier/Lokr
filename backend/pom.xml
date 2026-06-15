@@ -9,7 +9,7 @@
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>fr.valentinthuillier</groupId>
-	<artifactId>safevault</artifactId>
+	<artifactId>lokr</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name/>
 	<description/>

@@ -682,7 +682,7 @@ export default function VaultPage() {
                             <Shield className="w-6 h-6 text-white" />
                         </div>
                         <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-indigo-400">
-                            SafeVault
+                            Lokr
                         </h1>
                     </div>
 

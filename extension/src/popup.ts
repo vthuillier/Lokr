@@ -46,7 +46,7 @@ async function renderSetup() {
     <div class="container animate-in">
       <div class="header">
         <div class="logo">🛡️</div>
-        <h1>SafeVault</h1>
+        <h1>Lokr</h1>
         <p>Connexion au coffre</p>
       </div>
 
@@ -360,7 +360,7 @@ function createItemCard(item: DecryptedItem) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.id) {
       chrome.tabs.sendMessage(tab.id, {
-        type: "SAFEVAULT_AUTOFILL",
+        type: "LOKR_AUTOFILL",
         username: item.username,
         password: item.password,
       });

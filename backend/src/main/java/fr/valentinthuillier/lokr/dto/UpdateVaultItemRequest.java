@@ -1,0 +1,24 @@
+package fr.valentinthuillier.lokr.dto;
+
+import jakarta.validation.constraints.NotBlank;
+
+public record UpdateVaultItemRequest(
+
+        @NotBlank
+        String encryptedName,
+
+        String encryptedUsername,
+
+        String encryptedPassword,
+
+        String encryptedUrl,
+
+        String encryptedNotes,
+
+        @NotBlank
+        String nonce,
+
+        java.util.UUID groupId
+
+) {
+}

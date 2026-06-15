@@ -1,11 +1,11 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: safevault-db
+    container_name: lokr-db
     environment:
-      POSTGRES_DB: safevault
-      POSTGRES_USER: safevault
-      POSTGRES_PASSWORD: safevault
+      POSTGRES_DB: lokr
+      POSTGRES_USER: lokr
+      POSTGRES_PASSWORD: lokr
     ports:
       - "5432:5432"
     volumes:
@@ -13,20 +13,20 @@ services:
 
   backend:
     build: ./backend
-    container_name: safevault-backend
+    container_name: lokr-backend
     ports:
       - "8080:8080"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/safevault
-      SPRING_DATASOURCE_USERNAME: safevault
-      SPRING_DATASOURCE_PASSWORD: safevault
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/lokr
+      SPRING_DATASOURCE_USERNAME: lokr
+      SPRING_DATASOURCE_PASSWORD: lokr
       SECURITY_JWT_SECRET: ${JWT_SECRET:-heWejtBlnBI82RUwcVMqUmR2Ch/4rPOL++ms4FfB1NQ=}
     depends_on:
       - db
 
   frontend:
     build: ./frontend
-    container_name: safevault-frontend
+    container_name: lokr-frontend
     ports:
       - "80:80"
     depends_on:

@@ -1,6 +1,6 @@
-# 🛡️ SafeVault
+# 🛡️ Lokr
 
-**SafeVault** est un gestionnaire de mots de passe moderne, sécurisé et élégant, conçu pour offrir une expérience utilisateur premium tout en garantissant une sécurité maximale grâce au chiffrement local (**Zero-Knowledge**).
+**Lokr** est un gestionnaire de mots de passe moderne, sécurisé et élégant, conçu pour offrir une expérience utilisateur premium tout en garantissant une sécurité maximale grâce au chiffrement local (**Zero-Knowledge**).
 
 ![License: ELv2](https://img.shields.io/badge/license-ELv2-red.svg)
 ![Spring Boot](https://img.shields.io/badge/Backend-Spring%20Boot%203-brightgreen)
@@ -83,7 +83,7 @@ npm run dev
 
 Distribué sous la licence **Elastic License 2.0 (ELv2)**.
 
-Cette licence vous permet d'utiliser, copier, distribuer et modifier le logiciel librement, mais **interdit explicitement de fournir SafeVault à des tiers sous la forme d'un service géré ou hébergé** (SaaS commercial concurrent).
+Cette licence vous permet d'utiliser, copier, distribuer et modifier le logiciel librement, mais **interdit explicitement de fournir Lokr à des tiers sous la forme d'un service géré ou hébergé** (SaaS commercial concurrent).
 
 Voir le fichier [LICENSE](file:///home/vthuillier/IdeaProjects/SafeVault/LICENSE) pour plus d'informations.
 

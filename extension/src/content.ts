@@ -1,7 +1,7 @@
 chrome.runtime.onMessage.addListener((message: { type: string; username?: string; password?: string }) => {
-  if (message.type !== "SAFEVAULT_AUTOFILL") return;
+  if (message.type !== "LOKR_AUTOFILL") return;
 
-  console.log("[SafeVault] Autofill request received");
+  console.log("[Lokr] Autofill request received");
 
   const findInput = (selectors: string[]) => {
     for (const selector of selectors) {
@@ -60,6 +60,6 @@ chrome.runtime.onMessage.addListener((message: { type: string; username?: string
   }
   
   if (!usernameInput && !passwordInput) {
-    console.warn("[SafeVault] No input fields found for autofill");
+    console.warn("[Lokr] No input fields found for autofill");
   }
 });
