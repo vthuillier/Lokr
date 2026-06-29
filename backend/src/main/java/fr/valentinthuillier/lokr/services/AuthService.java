@@ -14,19 +14,36 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
 
+/**
+ * Service gérant les processus d'enregistrement et d'authentification des utilisateurs (MFA inclus).
+ */
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
+        /** Référentiel de gestion des utilisateurs. */
         private final UserRepository userRepository;
+
+        /** Composant d'encodage des mots de passe. */
         private final PasswordEncoder passwordEncoder;
+
+        /** Service de génération et gestion des jetons JWT. */
         private final JwtService jwtService;
+
+        /** Service de gestion de la double authentification TOTP. */
         private final TotpService totpService;
 
+        /**
+         * Enregistre un nouvel utilisateur dans le système et génère son premier jeton JWT.
+         *
+         * @param registerRequest Les données nécessaires à la création du compte (email, mot de passe, sels et clés cryptographiques)
+         * @return La réponse d'authentification contenant le jeton et les détails de l'utilisateur
+         * @throws ResponseStatusException Si l'adresse email est déjà enregistrée (409 Conflict)
+         */
         public AuthResponse register(RegisterRequest registerRequest) {
 
                 if (userRepository.existsByEmail(registerRequest.email())) {
-                        throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
+                        throw new ResponseStatusException(HttpStatus.CONFLICT, "L'adresse email existe déjà");
                 }
 
                 User user = User.builder()
@@ -59,12 +76,19 @@ public class AuthService {
 
         }
 
+        /**
+         * Authentifie un utilisateur à l'aide de ses identifiants. Gère également le contrôle du code MFA si activé.
+         *
+         * @param loginRequest Les informations de connexion (email, mot de passe et code TOTP optionnel)
+         * @return La réponse d'authentification contenant le jeton JWT si la connexion réussit
+         * @throws ResponseStatusException En cas d'identifiants incorrects (401 Unauthorized) ou de code MFA invalide
+         */
         public AuthResponse login(LoginRequest loginRequest) {
 
                 User user = userRepository.findByEmail(loginRequest.email())
                                 .orElseThrow(() -> new ResponseStatusException(
-                                                HttpStatus.UNAUTHORIZED,
-                                                "Invalid credentials"));
+                                                 HttpStatus.UNAUTHORIZED,
+                                                 "Identifiants incorrects"));
 
                 boolean matches = passwordEncoder.matches(
                                 loginRequest.password(),
@@ -72,7 +96,7 @@ public class AuthService {
 
                 if (!matches) {
                         throw new ResponseStatusException(
-                                        HttpStatus.UNAUTHORIZED, "Invalid credentials");
+                                        HttpStatus.UNAUTHORIZED, "Identifiants incorrects");
                 }
 
                 if (user.isTotpEnabled()) {

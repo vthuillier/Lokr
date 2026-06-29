@@ -18,17 +18,36 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
+/**
+ * Configuration de la sécurité de l'application.
+ * Configure la gestion de la sécurité HTTP, CORS, CSRF, la politique de session,
+ * l'encodage des mots de passe avec Argon2 et le filtrage JWT.
+ */
 @Configuration
 @RequiredArgsConstructor
 public class SecurityConfig {
 
+    /** Filtre d'authentification par jeton JWT. */
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
+    /**
+     * Définit l'encodeur de mot de passe par défaut.
+     * Utilise l'algorithme Argon2.
+     *
+     * @return L'encodeur de mot de passe Argon2
+     */
     @Bean
     public PasswordEncoder passwordEncoder() {
         return Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8();
     }
 
+    /**
+     * Configure la chaîne de filtres de sécurité HTTP (SecurityFilterChain).
+     *
+     * @param http Le builder de configuration de la sécurité HTTP
+     * @return La chaîne de filtres de sécurité configurée
+     * @throws Exception Si une erreur survient lors de la configuration
+     */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 
@@ -61,6 +80,12 @@ public class SecurityConfig {
                 .build();
     }
 
+    /**
+     * Configure les sources de configuration CORS (Cross-Origin Resource Sharing).
+     * Autorise les requêtes provenant de n'importe quelle origine en mode développement.
+     *
+     * @return La source de configuration CORS
+     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();

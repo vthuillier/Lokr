@@ -145,6 +145,9 @@ async function renderSetup() {
           await chrome.storage.local.remove("mp_p");
       }
       await chrome.storage.local.set(storageData);
+      if ((chrome.storage as any).session) {
+          await (chrome.storage as any).session.set({ mp_p: password });
+      }
       
       derivedKey = await deriveKey(password, base64ToUint8Array(data.kdfSalt));
       userToken = data.token;
@@ -280,6 +283,9 @@ function renderVaultTab(parent: Element) {
   document.querySelector("#logout")?.addEventListener("click", async () => {
     derivedKey = null;
     await chrome.storage.local.remove("mp_p");
+    if ((chrome.storage as any).session) {
+        await (chrome.storage as any).session.remove("mp_p");
+    }
     renderSetup();
   });
 
